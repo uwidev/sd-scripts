@@ -146,9 +146,20 @@ for job in jobs.iterdir():
         if debiased:
             basket.append(["db", ""])
 
-    # dataset
+    # dataset and resolution
+    training_resolution = basics.get("resolution")
+    if training_resolution != "1080":
+        basket.append(["r", training_resolution])
+
+    dataset_general = dataset.get("general")
     dataset_name = Path(dataset["datasets"][0]["subsets"][0]["image_dir"]).stem
-    basket.append(["", dataset_name])
+
+    if dataset_general:
+        dataset_resolution = dataset_general.get("resolution")
+        if dataset_resolution != 1080:
+            ds = dataset_name + f"r{dataset_resolution}"
+
+    basket.append(["", ds])
 
     name = "-".join("".join((k, v)) for k, v in basket)
 
