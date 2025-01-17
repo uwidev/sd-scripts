@@ -6,9 +6,9 @@ ftfy==6.1.1
 opencv-python==4.8.1.78
 einops==0.7.0
 pytorch-lightning==1.9.0
-bitsandbytes==0.44.0
-prodigyopt==1.0
-lion-pytorch==0.0.6
+bitsandbytes
+prodigyopt
+lion-pytorch
 tensorboard
 safetensors==0.4.2
 # gradio==3.16.2
@@ -35,8 +35,22 @@ imagesize==1.4.1
 # this is for onnx: 
 # protobuf==3.20.3
 # open clip for SDXL
-# open-clip-torch==2.20.0
+open-clip-torch==2.20.0
 # For logging
 rich==13.7.0
 # for kohya_ss library
+lycoris-lora==3.1.1.post1
 -e .
+
+# stuff that's missing for some reason
+came-pytorch
+pytorch_optimizer
+
+# other
+./custom_scheduler/.
+tomlkit
+
+# about torch and xformers
+# because we're cutting edge and like to suffer, we are on nightly torch 2.7
+# this requires us to build xformers from scratch
+# custom_schedulers have been updated tow work with torch 2.7
