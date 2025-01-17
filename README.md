@@ -1,3 +1,12 @@
+## Additions and changes from upstream
+`train_lora.py` is a script that loops a directory to find directories that follow the `config.toml` and `dataset.toml` training setup. It will train the loras sequentially and change the naming such that it's easier to reference later. When done training, it will move the directory to `../archive/{basename}`.
+
+Your `config.toml`'s `output_name` value is set to `{basename}`.
+
+I also nabbed derria-distro's custom schedulers and updated them to torch 2.7 nightly. If you want to run an earlier torch, you need to flip the comment and uncommented code under their `__init__` functions.
+
+---
+
 This repository contains training, generation and utility scripts for Stable Diffusion.
 
 [__Change History__](#change-history) is moved to the bottom of the page. 
