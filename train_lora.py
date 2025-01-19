@@ -24,7 +24,22 @@ args = parser.parse_args()
 jobs: Path = args.jobs_path
 
 
-def notation_normalize(n: float, to_exp: int = 5) -> str:
+# def notation_normalize(n: float, to_exp: int = 5) -> str:
+#     """Convert float to scientific notation fixed to an exponent.
+#
+#     Example:
+#     1.6e-4 -> 16e-5
+#     """
+#     if n == 1:
+#         return "1"
+#
+#     c, e = f"{n:.{to_exp}e}".split("e")
+#     diff = to_exp - -int(e)
+#     c = float(c) * 10**diff
+#     return f"{c:n}e{to_exp}"
+
+
+def notation_normalize(n: float) -> str:
     """Convert float to scientific notation fixed to an exponent.
 
     Example:
@@ -33,10 +48,11 @@ def notation_normalize(n: float, to_exp: int = 5) -> str:
     if n == 1:
         return "1"
 
-    c, e = f"{n:.{to_exp}e}".split("e")
-    diff = to_exp - -int(e)
-    c = float(c) * 10**diff
-    return f"{c:n}e{to_exp}"
+    c, e = f"{n:e}".split("e")
+    c = c.rstrip("0").rstrip(".")
+    e = e[1:].lstrip("0")  # slice to remove negative sign
+
+    return f"{c}e{e}"
 
 
 def li_str_to_dict(li: list[str]) -> dict:
@@ -93,12 +109,14 @@ for job in jobs.iterdir():
     # unet lr
     ulr = optimizer.get("unet_lr")
     basket.append(["u", notation_normalize(ulr)])
+    # basket.append(["u", f"{ulr:.1e}"])
 
     # te lr
     network_setup = config.get("Network_setup")
     if not network_setup.get("network_train_unet_only"):
         tlr = optimizer.get("text_encoder_lr")
         basket.append(["t", notation_normalize(tlr)])
+        # basket.append(["t", f"{tlr:.0e}"])
 
     # batch
     batch = optimizer.get("train_batch_size")
@@ -112,13 +130,16 @@ for job in jobs.iterdir():
     lyco = config.get("LyCORIS")
     module = lyco.get("network_module")
     network_args = lyco.get("network_args")
-    parsed_network = li_str_to_dict(network_args)
+    if network_args:
+        parsed_network = li_str_to_dict(network_args)
 
     if "networks.lora" == module:
         basket.append(["a", "lora"])
-        if parsed_network.get("down_lr_weight"):
-            weights = parsed_network["down_lr_weight"].split(",")
-            basket.append(["wd", weights[0]])
+        # I have been told there is little-to-no difference between training
+        # vs inference lbw. So we will not care about this anymore
+        # if parsed_network.get("down_lr_weight"):
+        #     weights = parsed_network["down_lr_weight"].split(",")
+        #     basket.append(["wd", weights[0]])
 
     elif "lycoris.kohya" == module:
         if parsed_network.get("algo") == "lokr":
@@ -133,22 +154,23 @@ for job in jobs.iterdir():
                 factor = 0
             basket.append(["f", str(factor)])
 
-        improvements = config.get("Further_improvement")
-        snr = improvements.get("min_snr_gamma")
-        if snr:
-            basket.append(["snr", str(snr)])
+    # other improvements, else
+    improvements = config.get("Further_improvement")
+    snr = improvements.get("min_snr_gamma")
+    if snr:
+        basket.append(["snr", str(snr)])
 
-        ipng = improvements.get("ip_noise_gamma")
-        if ipng:
-            basket.append(["ip", f"{ipng * 10:.1g}"])
+    ipng = improvements.get("ip_noise_gamma")
+    if ipng:
+        basket.append(["ip", f"{ipng * 10:.1g}"])
 
-        debiased = improvements.get("debiased_estimation_loss")
-        if debiased:
-            basket.append(["db", ""])
+    debiased = improvements.get("debiased_estimation_loss")
+    if debiased:
+        basket.append(["db", ""])
 
     # dataset and resolution
     training_resolution = basics.get("resolution")
-    if training_resolution != "1080":
+    if training_resolution != "1024":
         basket.append(["r", training_resolution])
 
     dataset_general = dataset.get("general")
@@ -156,8 +178,10 @@ for job in jobs.iterdir():
 
     if dataset_general:
         dataset_resolution = dataset_general.get("resolution")
-        if dataset_resolution != 1080:
+        if dataset_resolution != 1024:
             ds = dataset_name + f"r{dataset_resolution}"
+        else:
+            ds = dataset_name
 
     basket.append(["", ds])
 
