@@ -27,6 +27,7 @@ class RexAnnealingWarmRestarts(LRScheduler):
         self.cycle_multiplier = cycle_multiplier
         self.gamma = gamma  # debating calling this decay_rate or something
         self.last_epoch = last_epoch
+        self.d = d
 
         # new run
         if last_epoch == -1:
