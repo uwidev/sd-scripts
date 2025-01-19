@@ -3,7 +3,7 @@
 
 Your `config.toml`'s `output_name` value is set to `{basename}`.
 
-I also nabbed derria-distro's custom schedulers and updated them to torch 2.7 nightly. If you want to run an earlier torch, you need to flip the comment and uncommented code under their `__init__` functions.
+I also nabbed derria-distro's custom schedulers and updated them to torch 2.7 nightly. If you want to run an earlier torch, you need to flip the comment and uncommented code under their `__init__` functions. Modifications to `./library/train_util.py` have been made to alter the calling of the Rex custom scheduler to dynamically set `first_cycle_max_steps` and `warmup_steps` if set as a float, which will be based on the percentage of max steps.
 
 ---
 
