@@ -4424,6 +4424,19 @@ def get_scheduler_fix(args, optimizer: Optimizer, num_processes: int):
     # using any lr_scheduler from other library
     if args.lr_scheduler_type:
         lr_scheduler_type = args.lr_scheduler_type
+
+        # compatibility with derrian-distro's rex scheduler
+        if lr_scheduler_type == 'LoraEasyCustomOptimizer.RexAnnealingWarmRestarts.RexAnnealingWarmRestarts':
+            first_max: Optional[float | int] = lr_scheduler_kwargs["first_cycle_max_steps"]
+            lr_scheduler_kwargs["first_cycle_max_steps"] = (
+                int(num_training_steps * first_max) if isinstance(first_max, float) or first_max == 0 else first_max
+            )
+
+            warmup: Optional[float | int] = lr_scheduler_kwargs['warmup_steps']
+            lr_scheduler_kwargs['warmup_steps'] = (
+                int(num_training_steps * warmup) if isinstance(warmup, float) else warmup
+            )
+
         logger.info(f"use {lr_scheduler_type} | {lr_scheduler_kwargs} as lr_scheduler")
         if "." not in lr_scheduler_type:  # default to use torch.optim
             lr_scheduler_module = torch.optim.lr_scheduler
