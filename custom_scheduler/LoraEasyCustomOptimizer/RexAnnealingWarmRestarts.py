@@ -1,5 +1,8 @@
 # ripped from derrian-distro https://github.com/derrian-distro/LoRA_Easy_Training_scripts_Backend/tree/92e696b0bd47bab5742dd695f5848da7a5dee8c2/custom_scheduler
+#
 # updated for torch 2.7 nightly
+# by patching train_util.py, first_cycle_max_steps and warmup_steps can now
+# take a float, which is a percentage of the max training steps
 from functools import wraps
 import weakref
 from torch.optim.lr_scheduler import LRScheduler
@@ -16,6 +19,7 @@ class RexAnnealingWarmRestarts(LRScheduler):
         min_lr: float = 1e-6,
         warmup_steps: int = 0,
         last_epoch: int = -1,
+        d: float = 0.9,
     ) -> None:
         if not isinstance(optimizer, Optimizer):
             raise TypeError(f"{type(optimizer).__name__} is not an Optimizer")
@@ -23,7 +27,6 @@ class RexAnnealingWarmRestarts(LRScheduler):
         self.cycle_multiplier = cycle_multiplier
         self.gamma = gamma  # debating calling this decay_rate or something
         self.last_epoch = last_epoch
-        self.d = 0.9
 
         # new run
         if last_epoch == -1:
