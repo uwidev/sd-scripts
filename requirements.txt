@@ -55,7 +55,7 @@ pytorch_optimizer==3.5.0
 wheel==0.45.1
 ninja==1.11.1.4
 cmake==3.31.6
-setuptools==77.0.3
+setuptools==78.0.2
 #triton==3.2.0; platform_system == "Linux"
 prodigy-plus-schedule-free==1.9.0
 kornia==0.8.0
