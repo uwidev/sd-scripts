@@ -225,6 +225,8 @@ class NetworkTrainer:
         edm2_lr_scheduler=None,
         gradient_stats=None,
         network_norm_stats=None,
+        mean_grad_norm=None,
+        mean_combined_norm=None
     ):
         logs = {"loss/current": current_loss, "loss/average": avr_loss}
 
@@ -238,8 +240,14 @@ class NetworkTrainer:
 
         if keys_scaled is not None:
             logs["max_norm/keys_scaled"] = keys_scaled
-            logs["max_norm/average_key_norm"] = mean_norm
             logs["max_norm/max_key_norm"] = maximum_norm
+
+        if mean_norm is not None:
+            logs["norm/avg_key_norm"] = mean_norm
+        if mean_grad_norm is not None:
+            logs["norm/avg_grad_norm"] = mean_grad_norm
+        if mean_combined_norm is not None:
+            logs["norm/avg_combined_norm"] = mean_combined_norm
 
         if current_val_loss is not None:
             logs["loss/current_val_loss"] = current_val_loss                      
@@ -1651,6 +1659,7 @@ class NetworkTrainer:
         edm2_grad_norm_clipped = 0.0
         current_val_loss, average_val_loss, val_logs = None, None, {}
         keys_scaled, mean_norm, maximum_norm = None, None, None
+        max_mean_logs, mean_combined_norm = None, None
         max_mean_logs = {}
         current_global_step_loss = 0.0
         current_global_step_loss_scaled = 0.0 if args.edm2_loss_weighting else None
@@ -1739,7 +1748,9 @@ class NetworkTrainer:
                 edm2_grad_norm_clipped=edm2_grad_norm_clipped, 
                 edm2_lr_scheduler=mlp_lr_scheduler, 
                 gradient_stats=gradient_stats, 
-                network_norm_stats=network_norm_stats
+                network_norm_stats=network_norm_stats,
+                mean_grad_norm=mean_grad_norm,
+                mean_combined_norm=mean_combined_norm
             )
             accelerator.log(logs, step=0)
 
@@ -1980,6 +1991,11 @@ class NetworkTrainer:
                             grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
                             grad_norm_clipped = grad_norm
 
+                        if hasattr(network, "update_grad_norms"):
+                            network.update_grad_norms()
+                        if hasattr(network, "update_norms"):
+                            network.update_norms()
+
                         if args.grokfast_type:
                             grad_filter.filter()
 
@@ -2031,9 +2047,23 @@ class NetworkTrainer:
                                 #Unpack
                                 maximum_norm = maximum_norm.item()
 
+                            mean_grad_norm = None
+                            mean_combined_norm = None
                             max_mean_logs = {"Keys Scaled": keys_scaled, "Avg key norm": mean_norm}
                         else:
-                            keys_scaled, mean_norm, maximum_norm = None, None, None
+                            if hasattr(network, "weight_norms"):
+                                mean_norm = network.weight_norms().mean().item()
+                                mean_grad_norm = network.grad_norms().mean().item()
+                                mean_combined_norm = network.combined_weight_norms().mean().item()
+                                weight_norms = network.weight_norms()
+                                maximum_norm = weight_norms.max().item() if weight_norms.numel() > 0 else None
+                                keys_scaled = None
+                                max_mean_logs = {}
+                            else:
+                                keys_scaled, mean_norm, maximum_norm = None, None, None
+                                mean_grad_norm = None
+                                mean_combined_norm = None
+                                max_mean_logs = {}
 
                         if hasattr(network, "get_norms"):
                             unscaled_norms, scaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
@@ -2115,7 +2145,8 @@ class NetworkTrainer:
                                 args, current_global_step_loss, avr_loss, lr_scheduler, lr_descriptions, 
                                 optimizer, keys_scaled, mean_norm, maximum_norm, grad_norm, 
                                 grad_norm_clipped, current_val_loss, average_val_loss, current_global_step_loss_scaled, 
-                                average_loss_scaled, edm2_grad_norm, edm2_grad_norm_clipped, mlp_lr_scheduler, gradient_stats, network_norm_stats
+                                average_loss_scaled, edm2_grad_norm, edm2_grad_norm_clipped, mlp_lr_scheduler, gradient_stats, 
+                                network_norm_stats, mean_grad_norm, mean_combined_norm
                             )
                             accelerator.log(logs, step=global_step)
                             current_global_step_loss = 0.0
@@ -2341,6 +2372,11 @@ class NetworkTrainer:
                                 grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
                                 grad_norm_clipped = grad_norm
 
+                            if hasattr(network, "update_grad_norms"):
+                                network.update_grad_norms()
+                            if hasattr(network, "update_norms"):
+                                network.update_norms()
+
                             if args.grokfast_type:
                                 grad_filter.filter()
 
@@ -2389,9 +2425,23 @@ class NetworkTrainer:
                             #Unpack
                             maximum_norm = maximum_norm.item()
 
+                        mean_grad_norm = None
+                        mean_combined_norm = None
                         max_mean_logs = {"Keys Scaled": keys_scaled, "Avg key norm": mean_norm}
                     else:
-                        keys_scaled, mean_norm, maximum_norm = None, None, None
+                        if hasattr(network, "weight_norms"):
+                            mean_norm = network.weight_norms().mean().item()
+                            mean_grad_norm = network.grad_norms().mean().item()
+                            mean_combined_norm = network.combined_weight_norms().mean().item()
+                            weight_norms = network.weight_norms()
+                            maximum_norm = weight_norms.max().item() if weight_norms.numel() > 0 else None
+                            keys_scaled = None
+                            max_mean_logs = {}
+                        else:
+                            keys_scaled, mean_norm, maximum_norm = None, None, None
+                            mean_grad_norm = None
+                            mean_combined_norm = None
+                            max_mean_logs = {}
 
                     if accelerator.sync_gradients and hasattr(network, "get_norms"):
                         unscaled_norms, scaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
@@ -2503,7 +2553,8 @@ class NetworkTrainer:
                                 args, current_global_step_loss, avr_loss, lr_scheduler, lr_descriptions, 
                                 optimizer, keys_scaled, mean_norm, maximum_norm, grad_norm, 
                                 grad_norm_clipped, current_val_loss, average_val_loss, current_global_step_loss_scaled, 
-                                average_loss_scaled, edm2_grad_norm, edm2_grad_norm_clipped, mlp_lr_scheduler, gradient_stats, network_norm_stats
+                                average_loss_scaled, edm2_grad_norm, edm2_grad_norm_clipped, mlp_lr_scheduler, gradient_stats, 
+                                network_norm_stats, mean_grad_norm, mean_combined_norm
                             )
                             accelerator.log(logs, step=global_step)
                             current_global_step_loss = 0.0
