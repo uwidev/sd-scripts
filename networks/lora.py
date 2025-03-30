@@ -216,12 +216,17 @@ class LoRAModule(torch.nn.Module):
         if self.training is False:
             return
 
-        module_weights = self.lora_up.weight @ self.lora_down.weight
-        module_weights.mul(self.scale)
+        up = self.lora_up.weight
+        down = self.lora_down.weight
 
-        self.weight_norms = torch.norm(module_weights, dim=1, keepdim=True)
-        self.combined_weight_norms = torch.sqrt((self.org_weight_norm_estimate**2) + 
-                                           torch.sum(module_weights**2, dim=1, keepdim=True))
+        if up.shape == down.shape:
+            module_weights = up @ down
+            
+            module_weights.mul(self.scale)
+
+            self.weight_norms = torch.norm(module_weights, dim=1, keepdim=True)
+            self.combined_weight_norms = torch.sqrt((self.org_weight_norm_estimate**2) + 
+                                            torch.sum(module_weights**2, dim=1, keepdim=True))
 
     @torch.no_grad()
     def update_grad_norms(self):
@@ -232,6 +237,9 @@ class LoRAModule(torch.nn.Module):
         lora_down_grad = None
         lora_up_grad = None
 
+        lora_up_weight = self.lora_up.weight
+        lora_down_weight = self.lora_down.weight
+
         for name, param in self.named_parameters():
             if name == "lora_down.weight":
                 lora_down_grad = param.grad
@@ -239,10 +247,12 @@ class LoRAModule(torch.nn.Module):
                 lora_up_grad = param.grad
 
         # Calculate gradient norms if we have both gradients
-        if lora_down_grad is not None and lora_up_grad is not None:
+        if (lora_down_grad is not None and lora_up_weight.shape == lora_down_grad.shape 
+            and lora_up_grad is not None and lora_down_weight.shape == lora_up_grad.shape):
             with torch.autocast(self.device.type):
                 approx_grad = self.scale * ((self.lora_up.weight @ lora_down_grad) + (lora_up_grad @ self.lora_down.weight))
                 self.grad_norms = torch.norm(approx_grad, dim=1, keepdim=True)
+
 
 
     @property
@@ -1640,13 +1650,13 @@ class LoRANetwork(torch.nn.Module):
             else:
                 updown = up @ down
 
-            unscaled_norm = updown.norm()
+            unscaled_norm = updown.norm().item()
 
             if not (unscaled_norm is None or np.isnan(unscaled_norm) or np.isinf(unscaled_norm)):
                 unscaled_norms.append(unscaled_norm)
 
             updown *= scale
-            scaled_norm = updown.norm()
+            scaled_norm = updown.norm().item()
             if not (scaled_norm is None or np.isnan(scaled_norm) or np.isinf(scaled_norm)):
                 scaled_norms.append(scaled_norm)
 
