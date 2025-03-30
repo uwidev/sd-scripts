@@ -1659,7 +1659,7 @@ class NetworkTrainer:
         edm2_grad_norm_clipped = 0.0
         current_val_loss, average_val_loss, val_logs = None, None, {}
         keys_scaled, mean_norm, maximum_norm = None, None, None
-        max_mean_logs, mean_combined_norm = None, None
+        mean_grad_norm, mean_combined_norm = None, None
         max_mean_logs = {}
         current_global_step_loss = 0.0
         current_global_step_loss_scaled = 0.0 if args.edm2_loss_weighting else None
