@@ -1991,6 +1991,12 @@ class NetworkTrainer:
                             grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
                             grad_norm_clipped = grad_norm
 
+                        """Track step count for caching"""
+                        if not hasattr(network, '_current_step'):
+                            network._current_step = 0
+                        else:
+                            network._current_step += 1
+
                         if hasattr(network, "update_grad_norms"):
                             network.update_grad_norms()
                         if hasattr(network, "update_norms"):
@@ -2371,6 +2377,13 @@ class NetworkTrainer:
                             else: 
                                 grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
                                 grad_norm_clipped = grad_norm
+
+
+                            """Track step count for caching"""
+                            if not hasattr(network, '_current_step'):
+                                network._current_step = 0
+                            else:
+                                network._current_step += 1
 
                             if hasattr(network, "update_grad_norms"):
                                 network.update_grad_norms()
