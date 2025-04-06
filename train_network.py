@@ -1991,16 +1991,18 @@ class NetworkTrainer:
                             grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
                             grad_norm_clipped = grad_norm
 
-                        """Track step count for caching"""
-                        if not hasattr(network, '_current_step'):
-                            network._current_step = 0
-                        else:
-                            network._current_step += 1
+                        unwrapped_network = accelerator.unwrap_model(network)
 
-                        if hasattr(network, "update_grad_norms"):
-                            network.update_grad_norms()
-                        if hasattr(network, "update_norms"):
-                            network.update_norms()
+                        """Track step count for caching"""
+                        if not hasattr(unwrapped_network, '_current_step'):
+                            unwrapped_network._current_step = 0
+                        else:
+                            unwrapped_network._current_step += 1
+
+                        if hasattr(unwrapped_network, "update_grad_norms"):
+                            unwrapped_network.update_grad_norms()
+                        if hasattr(unwrapped_network, "update_norms"):
+                            unwrapped_network.update_norms()
 
                         if args.grokfast_type:
                             grad_filter.filter()
@@ -2056,20 +2058,20 @@ class NetworkTrainer:
                             mean_grad_norm = None
                             mean_combined_norm = None
                             max_mean_logs = {"Keys Scaled": keys_scaled, "Avg key norm": mean_norm}
+                        elif hasattr(network, "weight_norms"):
+                            unwrapped_network = accelerator.unwrap_model(network)
+                            mean_norm = unwrapped_network.weight_norms().mean().item()
+                            mean_grad_norm = unwrapped_network.grad_norms().mean().item()
+                            mean_combined_norm = unwrapped_network.combined_weight_norms().mean().item()
+                            weight_norms = unwrapped_network.weight_norms()
+                            maximum_norm = weight_norms.max().item() if weight_norms.numel() > 0 else None
+                            keys_scaled = None
+                            max_mean_logs = {}
                         else:
-                            if hasattr(network, "weight_norms"):
-                                mean_norm = network.weight_norms().mean().item()
-                                mean_grad_norm = network.grad_norms().mean().item()
-                                mean_combined_norm = network.combined_weight_norms().mean().item()
-                                weight_norms = network.weight_norms()
-                                maximum_norm = weight_norms.max().item() if weight_norms.numel() > 0 else None
-                                keys_scaled = None
-                                max_mean_logs = {}
-                            else:
-                                keys_scaled, mean_norm, maximum_norm = None, None, None
-                                mean_grad_norm = None
-                                mean_combined_norm = None
-                                max_mean_logs = {}
+                            keys_scaled, mean_norm, maximum_norm = None, None, None
+                            mean_grad_norm = None
+                            mean_combined_norm = None
+                            max_mean_logs = {}
 
                         if hasattr(network, "get_norms"):
                             unscaled_norms, scaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
@@ -2148,11 +2150,28 @@ class NetworkTrainer:
                                 current_global_step_loss_scaled = None
                                 average_loss_scaled = None
                             logs = self.generate_step_logs(
-                                args, current_global_step_loss, avr_loss, lr_scheduler, lr_descriptions, 
-                                optimizer, keys_scaled, mean_norm, maximum_norm, grad_norm, 
-                                grad_norm_clipped, current_val_loss, average_val_loss, current_global_step_loss_scaled, 
-                                average_loss_scaled, edm2_grad_norm, edm2_grad_norm_clipped, mlp_lr_scheduler, gradient_stats, 
-                                network_norm_stats, mean_grad_norm, mean_combined_norm
+                                args=args, 
+                                current_loss=current_global_step_loss, 
+                                avr_loss=avr_loss, 
+                                lr_scheduler=lr_scheduler, 
+                                lr_descriptions=lr_descriptions, 
+                                optimizer=optimizer, 
+                                keys_scaled=keys_scaled, 
+                                mean_norm=mean_norm, 
+                                maximum_norm=maximum_norm, 
+                                grad_norm=grad_norm, 
+                                grad_norm_clipped=grad_norm_clipped, 
+                                current_val_loss=current_val_loss, 
+                                average_val_loss=average_val_loss, 
+                                current_loss_scaled=current_global_step_loss_scaled, 
+                                average_loss_scaled=average_loss_scaled, 
+                                edm2_grad_norm=edm2_grad_norm, 
+                                edm2_grad_norm_clipped=edm2_grad_norm_clipped, 
+                                edm2_lr_scheduler=mlp_lr_scheduler, 
+                                gradient_stats=gradient_stats, 
+                                network_norm_stats=network_norm_stats,
+                                mean_grad_norm=mean_grad_norm,
+                                mean_combined_norm=mean_combined_norm
                             )
                             accelerator.log(logs, step=global_step)
                             current_global_step_loss = 0.0
@@ -2378,17 +2397,18 @@ class NetworkTrainer:
                                 grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
                                 grad_norm_clipped = grad_norm
 
+                            unwrapped_network = accelerator.unwrap_model(network)
 
                             """Track step count for caching"""
-                            if not hasattr(network, '_current_step'):
-                                network._current_step = 0
+                            if not hasattr(unwrapped_network, '_current_step'):
+                                unwrapped_network._current_step = 0
                             else:
-                                network._current_step += 1
+                                unwrapped_network._current_step += 1
 
-                            if hasattr(network, "update_grad_norms"):
-                                network.update_grad_norms()
-                            if hasattr(network, "update_norms"):
-                                network.update_norms()
+                            if hasattr(unwrapped_network, "update_grad_norms"):
+                                unwrapped_network.update_grad_norms()
+                            if hasattr(unwrapped_network, "update_norms"):
+                                unwrapped_network.update_norms()
 
                             if args.grokfast_type:
                                 grad_filter.filter()
@@ -2441,20 +2461,20 @@ class NetworkTrainer:
                         mean_grad_norm = None
                         mean_combined_norm = None
                         max_mean_logs = {"Keys Scaled": keys_scaled, "Avg key norm": mean_norm}
+                    elif hasattr(network, "weight_norms") and accelerator.sync_gradients:
+                        unwrapped_network = accelerator.unwrap_model(network)
+                        weight_norms = unwrapped_network.weight_norms()
+                        mean_norm = weight_norms.mean().item()
+                        mean_grad_norm = unwrapped_network.grad_norms().mean().item()
+                        mean_combined_norm = unwrapped_network.combined_weight_norms().mean().item()
+                        maximum_norm = weight_norms.max().item() if weight_norms.numel() > 0 else None
+                        keys_scaled = None
+                        max_mean_logs = {}
                     else:
-                        if hasattr(network, "weight_norms"):
-                            mean_norm = network.weight_norms().mean().item()
-                            mean_grad_norm = network.grad_norms().mean().item()
-                            mean_combined_norm = network.combined_weight_norms().mean().item()
-                            weight_norms = network.weight_norms()
-                            maximum_norm = weight_norms.max().item() if weight_norms.numel() > 0 else None
-                            keys_scaled = None
-                            max_mean_logs = {}
-                        else:
-                            keys_scaled, mean_norm, maximum_norm = None, None, None
-                            mean_grad_norm = None
-                            mean_combined_norm = None
-                            max_mean_logs = {}
+                        keys_scaled, mean_norm, maximum_norm = None, None, None
+                        mean_grad_norm = None
+                        mean_combined_norm = None
+                        max_mean_logs = {}
 
                     if accelerator.sync_gradients and hasattr(network, "get_norms"):
                         unscaled_norms, scaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
@@ -2563,11 +2583,28 @@ class NetworkTrainer:
                                 current_global_step_loss_scaled = None
                                 average_loss_scaled = None
                             logs = self.generate_step_logs(
-                                args, current_global_step_loss, avr_loss, lr_scheduler, lr_descriptions, 
-                                optimizer, keys_scaled, mean_norm, maximum_norm, grad_norm, 
-                                grad_norm_clipped, current_val_loss, average_val_loss, current_global_step_loss_scaled, 
-                                average_loss_scaled, edm2_grad_norm, edm2_grad_norm_clipped, mlp_lr_scheduler, gradient_stats, 
-                                network_norm_stats, mean_grad_norm, mean_combined_norm
+                                args=args, 
+                                current_loss=current_global_step_loss, 
+                                avr_loss=avr_loss, 
+                                lr_scheduler=lr_scheduler, 
+                                lr_descriptions=lr_descriptions, 
+                                optimizer=optimizer, 
+                                keys_scaled=keys_scaled, 
+                                mean_norm=mean_norm, 
+                                maximum_norm=maximum_norm, 
+                                grad_norm=grad_norm, 
+                                grad_norm_clipped=grad_norm_clipped, 
+                                current_val_loss=current_val_loss, 
+                                average_val_loss=average_val_loss, 
+                                current_loss_scaled=current_global_step_loss_scaled, 
+                                average_loss_scaled=average_loss_scaled, 
+                                edm2_grad_norm=edm2_grad_norm, 
+                                edm2_grad_norm_clipped=edm2_grad_norm_clipped, 
+                                edm2_lr_scheduler=mlp_lr_scheduler, 
+                                gradient_stats=gradient_stats, 
+                                network_norm_stats=network_norm_stats,
+                                mean_grad_norm=mean_grad_norm,
+                                mean_combined_norm=mean_combined_norm
                             )
                             accelerator.log(logs, step=global_step)
                             current_global_step_loss = 0.0
