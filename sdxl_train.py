@@ -205,8 +205,14 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
                     if args.loss_related_use_float64:
                         target = target.to(torch.float64)
 
+                    if noise_pred.dtype not in {torch.float32, torch.float64}:
+                        noise_pred = noise_pred.float()
+
+                    if target.dtype not in {torch.float32, torch.float64}:
+                        target = target.float()
+
                     loss = train_util.conditional_loss(
-                        noise_pred.float(), target.float(), reduction="mean", loss_type="l2", huber_c=huber_c
+                        noise_pred, target, reduction="mean", loss_type="l2", huber_c=huber_c
                     )
                     total_loss += loss
 
@@ -1072,8 +1078,15 @@ def train(args):
                         or args.edm2_loss_weighting
                         or args.sangoi_loss_modifier
                     ):
+                        
+                        if noise_pred.dtype not in {torch.float32, torch.float64}:
+                            noise_pred = noise_pred.float()
+
+                        if target.dtype not in {torch.float32, torch.float64}:
+                            target = target.float()
+
                         # do not mean over batch dimension for snr weight or scale v-pred loss
-                        loss = train_util.conditional_loss(noise_pred.float(), target.float(), args.loss_type, "none", huber_c)
+                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c)
                         if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
                             loss = apply_masked_loss(loss, batch)
                         loss = loss.mean([1, 2, 3])
@@ -1086,8 +1099,8 @@ def train(args):
                                 min_snr = float(args.sangoi_loss_modifier_min_snr)
 
                             loss = loss * train_util.sangoi_loss_modifier(timesteps, 
-                                                                    noise_pred.float(), 
-                                                                    target.float(), 
+                                                                    noise_pred,
+                                                                    target, 
                                                                     noise_scheduler,
                                                                     min_snr,
                                                                     float(args.sangoi_loss_modifier_max_snr))
@@ -1114,7 +1127,13 @@ def train(args):
 
                         loss = loss.mean()  # Mean over batch
                     else:
-                        loss = train_util.conditional_loss(noise_pred.float(), target.float(), args.loss_type, "mean", huber_c)
+                        if noise_pred.dtype not in {torch.float32, torch.float64}:
+                            noise_pred = noise_pred.float()
+
+                        if target.dtype not in {torch.float32, torch.float64}:
+                            target = target.float()
+
+                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "mean", huber_c)
                         pre_scaling_loss = loss
 
                     # Divide loss by iter_size to average over accumulated steps
@@ -1377,8 +1396,14 @@ def train(args):
                         or args.edm2_loss_weighting
                         or args.sangoi_loss_modifier
                     ):
+                        if noise_pred.dtype not in {torch.float32, torch.float64}:
+                            noise_pred = noise_pred.float()
+
+                        if target.dtype not in {torch.float32, torch.float64}:
+                            target = target.float()
+
                         # do not mean over batch dimension for snr weight or scale v-pred loss
-                        loss = train_util.conditional_loss(noise_pred.float(), target.float(), args.loss_type, "none", huber_c)
+                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c)
                         if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
                             loss = apply_masked_loss(loss, batch)
                         loss = loss.mean([1, 2, 3])
@@ -1391,8 +1416,8 @@ def train(args):
                                 min_snr = float(args.sangoi_loss_modifier_min_snr)
 
                             loss = loss * train_util.sangoi_loss_modifier(timesteps, 
-                                                                    noise_pred.float(), 
-                                                                    target.float(), 
+                                                                    noise_pred, 
+                                                                    target, 
                                                                     noise_scheduler,
                                                                     min_snr,
                                                                     float(args.sangoi_loss_modifier_max_snr))
@@ -1418,7 +1443,13 @@ def train(args):
 
                         loss = loss.mean()  # Mean over batch
                     else:
-                        loss = train_util.conditional_loss(noise_pred.float(), target.float(), args.loss_type, "mean", huber_c)
+                        if noise_pred.dtype not in {torch.float32, torch.float64}:
+                            noise_pred = noise_pred.float()
+
+                        if target.dtype not in {torch.float32, torch.float64}:
+                            target = target.float()
+
+                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "mean", huber_c)
                         pre_scaling_loss = loss
 
                     accelerator.backward(loss)
