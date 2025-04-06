@@ -145,6 +145,10 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
 
         latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
 
+        if args.loss_related_use_float64:
+            # Convert to float64, noise and noisy latents will be float64 due to using like on latents
+            latents = latents.to(torch.float64)
+
         text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
         if text_encoder_outputs_list is not None:
             # Text Encoder outputs are cached
@@ -178,7 +182,7 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
             # Sample noise
             batch_size = latents.shape[0]
             for fixed_timesteps in timesteps_list:
-                with accelerator.autocast():
+                with accelerator.autocast(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
                     timesteps = torch.full((batch_size,), fixed_timesteps, dtype=torch.long, device=latents.device)
                     
                     noise, noisy_latents, timesteps, huber_c = train_util.get_noise_noisy_latents_and_timesteps(
@@ -189,11 +193,17 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
 
                     noise_pred = unet(noisy_latents, timesteps, text_embedding, vector_embedding)
 
+                    if args.loss_related_use_float64:
+                        noise_pred = noise_pred.to(torch.float64)
+
                     if args.v_parameterization:
                         # v-parameterization training
                         target = noise_scheduler.get_velocity(latents, noise, timesteps)
                     else:
                         target = noise
+
+                    if args.loss_related_use_float64:
+                        target = target.to(torch.float64)
 
                     loss = train_util.conditional_loss(
                         noise_pred.float(), target.float(), reduction="mean", loss_type="l2", huber_c=huber_c
@@ -854,7 +864,8 @@ def train(args):
                                                                     optimizer=getattr(optimizer_module, case_sensitive_optimizer_type),
                                                                     lr=opti_lr,
                                                                     optimizer_args=opti_args,
-                                                                    device=accelerator.device)
+                                                                    device=accelerator.device,
+                                                                    dtype=torch.float64 if args.edm2_loss_weighting_use_float64 else torch.float32)
         if args.edm2_loss_weighting_initial_weights:
             lossweightMLP.load_weights(args.edm2_loss_weighting_initial_weights)
 
@@ -979,6 +990,10 @@ def train(args):
                                 latents = torch.nan_to_num(latents, 0, out=latents)
                     latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
 
+                    if args.loss_related_use_float64:
+                        # Convert to float64, noise and noisy latents will be float64 due to using like on latents
+                        latents = latents.to(torch.float64)
+
                     text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
                     if text_encoder_outputs_list is not None:
                         # Text Encoder outputs are cached
@@ -1030,14 +1045,20 @@ def train(args):
                     noisy_latents = noisy_latents.to(weight_dtype)  # TODO check why noisy_latents is not weight_dtype
 
                     # Predict the noise residual
-                    with accelerator.autocast():
+                    with accelerator.autocast(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
                         noise_pred = unet(noisy_latents, timesteps, text_embedding, vector_embedding)
+
+                    if args.loss_related_use_float64:
+                        noise_pred = noise_pred.to(torch.float64)
 
                     if args.v_parameterization:
                         # v-parameterization training
                         target = noise_scheduler.get_velocity(latents, noise, timesteps)
                     else:
                         target = noise
+
+                    if args.loss_related_use_float64:
+                        target = target.to(torch.float64)
 
                     huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
                     if (
@@ -1279,6 +1300,10 @@ def train(args):
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.nan_to_num(latents, 0, out=latents)
                     latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
+                    
+                    if args.loss_related_use_float64:
+                        # Convert to float64, noise and noisy latents will be float64 due to using like on latents
+                        latents = latents.to(torch.float64)
 
                     text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
                     if text_encoder_outputs_list is not None:
@@ -1331,7 +1356,7 @@ def train(args):
                     noisy_latents = noisy_latents.to(weight_dtype)  # TODO check why noisy_latents is not weight_dtype
 
                     # Predict the noise residual
-                    with accelerator.autocast():
+                    with accelerator.autocast(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
                         noise_pred = unet(noisy_latents, timesteps, text_embedding, vector_embedding)
 
                     if args.v_parameterization:
@@ -1901,6 +1926,18 @@ def setup_parser() -> argparse.ArgumentParser:
         "--edm2_loss_weighting_laplace",
         action="store_true",
         help="Use EDM2 loss weighting to calculate timestep sampling using laplace.",
+    )
+
+    parser.add_argument(
+        "--loss_related_use_float64",
+        action="store_true",
+        help="Upcasts targets, noise, noisy latents, latents, and loss during loss and noise calculations to float64 for greater precision. Slight compute and vram overhead."
+    )
+
+    parser.add_argument(
+        "--edm2_loss_weighting_use_float64",
+        action="store_true",
+        help="Uses float64 for edm2 loss weighting."
     )
 
 
