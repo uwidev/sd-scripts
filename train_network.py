@@ -2049,6 +2049,36 @@ class NetworkTrainer:
                         # Compute loss
                         loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c, scale=float(args.loss_scale))
 
+                        wav_loss = None
+                        if args.wavelet_loss:
+                            #if args.wavelet_loss_rectified_flow:
+                                # Calculate flow-based clean estimate using the target
+                            #    flow_based_clean = noisy_latents - sigmas.view(-1, 1, 1, 1) * target
+
+                                # Calculate model-based denoised estimate
+                            #    model_denoised = noisy_latents - sigmas.view(-1, 1, 1, 1) * noise_pred
+                            #else:
+                            flow_based_clean = target
+                            model_denoised = noise_pred
+
+                            def wavelet_loss_fn(args):
+                                loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
+                                def loss_fn(input: torch.Tensor, target: torch.Tensor, reduction: str = "mean"):
+                                    # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
+                                    # To get the noise scheduler, timesteps, and latents
+                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, latents, noise_scheduler)
+                                    return train_util.conditional_loss(input.float(), target.float(), loss_type, reduction, huber_c)
+
+                                return loss_fn
+
+
+                            self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args))
+
+                            wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(model_denoised.float(), flow_based_clean.float())
+                            # Weight the losses as needed
+                            #loss = loss + args.wavelet_loss_alpha * wav_loss
+                            loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
+
                         if weighting is not None:
                             loss = loss * weighting
                         if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
