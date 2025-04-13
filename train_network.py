@@ -47,6 +47,7 @@ from library.custom_train_functions import (
     add_v_prediction_like_loss,
     apply_debiased_estimation,
     apply_masked_loss,
+    WaveletLoss
 )
 from library.utils import setup_logging, add_logging_arguments
 
@@ -237,6 +238,8 @@ class NetworkTrainer:
         average_val_loss=None,
         current_loss_scaled=None,
         average_loss_scaled=None,
+        current_loss_wav=None,
+        average_loss_wav=None,
         edm2_grad_norm=None,
         edm2_grad_norm_clipped=None,
         edm2_lr_scheduler=None,
@@ -283,7 +286,11 @@ class NetworkTrainer:
             logs["timestep_sampler/distribution_max"] = timestep_distribution["max"]
         
         if sampler_loss is not None:
-            logs["timestep_sampler/loss"] = sampler_loss
+            logs["loss/timestep_sampler/current"] = sampler_loss
+
+        if current_loss_wav is not None:
+            logs["loss/wavelet/current"] = current_loss_wav
+            logs["loss/wavelet/average"] = average_loss_wav
 
         if gradient_stats:
             logs = {**logs, **gradient_stats}
@@ -1339,6 +1346,16 @@ class NetworkTrainer:
             "ss_huber_c": args.huber_c,
             "ss_fp8_base": bool(args.fp8_base),
             "ss_fp8_base_unet": bool(args.fp8_base_unet),
+            "ss_wavelet_loss": args.wavelet_loss,
+            "ss_wavelet_loss_alpha": args.wavelet_loss_alpha,
+            "ss_wavelet_loss_type": args.wavelet_loss_type,
+            "ss_wavelet_loss_transform": args.wavelet_loss_transform,
+            "ss_wavelet_loss_wavelet": args.wavelet_loss_wavelet,
+            "ss_wavelet_loss_level": args.wavelet_loss_level,
+            "ss_wavelet_loss_band_weights": json.dumps(args.wavelet_loss_band_weights) if args.wavelet_loss_band_weights is not None else None,
+            "ss_wavelet_loss_band_level_weights": json.dumps(args.wavelet_loss_band_level_weights) if args.wavelet_loss_band_weights is not None else None,
+            "ss_wavelet_loss_ll_level_threshold": args.wavelet_loss_ll_level_threshold,
+            "ss_wavelet_loss_rectified_flow": args.wavelet_loss_rectified_flow,
         }
 
         self.update_metadata(metadata, args)  # architecture specific metadata
@@ -1666,6 +1683,30 @@ class NetworkTrainer:
             sampler_optimizer = None
             sampler_lr_scheduler = None
 
+        if args.wavelet_loss:
+            self.wavelet_loss = WaveletLoss(
+                wavelet=args.wavelet_loss_wavelet, 
+                level=int(args.wavelet_loss_level), 
+                band_level_weights=args.wavelet_loss_band_level_weights, 
+                band_weights=args.wavelet_loss_band_weights, 
+                ll_level_threshold=args.wavelet_loss_ll_level_threshold, 
+                device=accelerator.device
+            )
+
+            loss_wav_recorder = train_util.LossRecorder()
+
+            logger.info("Wavelet Loss:")
+            logger.info(f"\tLevel: {args.wavelet_loss_level}")
+            logger.info(f"\tAlpha: {args.wavelet_loss_alpha}")
+            logger.info(f"\tTransform: {args.wavelet_loss_transform}")
+            logger.info(f"\tWavelet: {args.wavelet_loss_wavelet}")
+            if args.wavelet_loss_ll_level_threshold is not None:
+                logger.info(f"\tLL level threshold: {args.wavelet_loss_ll_level_threshold}")
+            if args.wavelet_loss_band_weights is not None:
+                logger.info(f"\tBand weights: {args.wavelet_loss_band_weights}")
+            if args.wavelet_loss_band_level_weights is not None:
+                logger.info(f"\tBand level weights: {args.wavelet_loss_band_level_weights}")
+
         if accelerator.is_main_process:
             init_kwargs = {}
             if args.wandb_run_name:
@@ -1680,7 +1721,7 @@ class NetworkTrainer:
 
         loss_recorder = train_util.LossRecorder()
         val_loss_recorder = train_util.LossRecorder()
-
+        
         if args.edm2_loss_weighting:
             loss_scaled_recorder = train_util.LossRecorder()
         
@@ -1738,7 +1779,9 @@ class NetworkTrainer:
         max_mean_logs = {}
         current_global_step_loss = 0.0
         current_global_step_loss_scaled = 0.0 if args.edm2_loss_weighting else None
+        current_global_step_loss_wav = 0.0 if args.wavelet_loss else None
         average_loss_scaled = 0.0 if args.edm2_loss_weighting else None
+        average_loss_wav = 0.0 if args.wavelet_loss else None
         avr_loss = 0.0
         sampler_loss = 0.0
         gradient_stats = {
@@ -1820,6 +1863,8 @@ class NetworkTrainer:
                 average_val_loss=average_val_loss, 
                 current_loss_scaled=current_global_step_loss_scaled, 
                 average_loss_scaled=average_loss_scaled, 
+                current_loss_wav=current_global_step_loss_wav,
+                average_loss_wav = average_loss_wav,
                 edm2_grad_norm=edm2_grad_norm, 
                 edm2_grad_norm_clipped=edm2_grad_norm_clipped, 
                 edm2_lr_scheduler=mlp_lr_scheduler, 
@@ -2060,6 +2105,11 @@ class NetworkTrainer:
                     else:
                         current_global_step_loss_scaled = None
 
+                    if args.wavelet_loss:
+                        current_global_step_loss_wav += wav_loss.detach().item() / grad_accum_loss_scaling
+                    else:
+                        current_global_step_loss_wav = None
+
                     # BEFORE THE OPTIMIZER PASS - Calculate and store "before" predictions
                     if (args.adaptive_timestep_sampling                             
                         and (global_step % current_sampling_freq == 0) 
@@ -2294,6 +2344,9 @@ class NetworkTrainer:
                         if args.edm2_loss_weighting:
                             loss_scaled_recorder.add(epoch=epoch, step=global_step, loss=current_global_step_loss_scaled / accumulation_counter)
 
+                        if args.wavelet_loss:
+                            loss_wav_recorder.add(epoch=epoch, step=global_step, loss=current_global_step_loss_wav / accumulation_counter)
+
                         avr_loss: float = loss_recorder.moving_average if global_step > 0 else 0.0
                         logs = {"avg_loss": avr_loss}
 
@@ -2310,6 +2363,14 @@ class NetworkTrainer:
                             else:
                                 current_global_step_loss_scaled = None
                                 average_loss_scaled = None
+
+                            if args.wavelet_loss:
+                                current_global_step_loss_wav = (current_global_step_loss_wav / accumulation_counter)
+                                average_loss_wav: float = loss_wav_recorder.moving_average
+                            else:
+                                current_global_step_loss_wav = None
+                                average_loss_wav = None
+
                             logs = self.generate_step_logs(
                                 args=args, 
                                 current_loss=current_global_step_loss, 
@@ -2326,6 +2387,8 @@ class NetworkTrainer:
                                 average_val_loss=average_val_loss, 
                                 current_loss_scaled=current_global_step_loss_scaled, 
                                 average_loss_scaled=average_loss_scaled, 
+                                current_loss_wav=current_global_step_loss_wav,
+                                average_loss_wav=average_loss_wav,
                                 edm2_grad_norm=edm2_grad_norm, 
                                 edm2_grad_norm_clipped=edm2_grad_norm_clipped, 
                                 edm2_lr_scheduler=mlp_lr_scheduler, 
@@ -2338,6 +2401,9 @@ class NetworkTrainer:
                             current_global_step_loss = 0.0
                             if args.edm2_loss_weighting:
                                 current_global_step_loss_scaled = 0.0
+
+                            if args.wavelet_loss:
+                                current_global_step_loss_wav = 0.0
 
                         # Reset accumulation counter
                         accumulation_counter = 0
@@ -2517,6 +2583,36 @@ class NetworkTrainer:
                         huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
                         # Compute loss
                         loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c, scale=float(args.loss_scale))
+
+                        wav_loss = None
+                        if args.wavelet_loss:
+                            #if args.wavelet_loss_rectified_flow:
+                                # Calculate flow-based clean estimate using the target
+                            #    flow_based_clean = noisy_latents - sigmas.view(-1, 1, 1, 1) * target
+
+                                # Calculate model-based denoised estimate
+                            #    model_denoised = noisy_latents - sigmas.view(-1, 1, 1, 1) * noise_pred
+                            #else:
+                            flow_based_clean = target
+                            model_denoised = noise_pred
+
+                            def wavelet_loss_fn(args):
+                                loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
+                                def loss_fn(input: torch.Tensor, target: torch.Tensor, reduction: str = "mean"):
+                                    # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
+                                    # To get the noise scheduler, timesteps, and latents
+                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, latents, noise_scheduler)
+                                    return train_util.conditional_loss(input.float(), target.float(), loss_type, reduction, huber_c)
+
+                                return loss_fn
+
+
+                            self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args))
+
+                            wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(model_denoised.float(), flow_based_clean.float())
+                            # Weight the losses as needed
+                            #loss = loss + args.wavelet_loss_alpha * wav_loss
+                            loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
 
                         if weighting is not None:
                             loss = loss * weighting
@@ -2814,6 +2910,9 @@ class NetworkTrainer:
                         if args.edm2_loss_weighting:
                             loss_scaled_recorder.add(epoch=epoch, step=global_step, loss=current_global_step_loss_scaled / accumulation_counter)
 
+                        if args.wavelet_loss:
+                            loss_wav_recorder.add(epoch=epoch, step=global_step, loss=current_global_step_loss_wav / accumulation_counter)
+
                         avr_loss: float = loss_recorder.moving_average if global_step > 0 else 0.0
                         logs = {"avg_loss": avr_loss}
 
@@ -2830,6 +2929,15 @@ class NetworkTrainer:
                             else:
                                 current_global_step_loss_scaled = None
                                 average_loss_scaled = None
+
+                            if args.wavelet_loss:
+                                current_global_step_loss_wav = (current_global_step_loss_wav / accumulation_counter)
+                                average_loss_wav: float = loss_scaled_recorder.moving_average
+                            else:
+                                current_global_step_loss_wav = None
+                                average_loss_wav = None
+
+
                             logs = self.generate_step_logs(
                                 args=args, 
                                 current_loss=current_global_step_loss, 
@@ -2846,6 +2954,8 @@ class NetworkTrainer:
                                 average_val_loss=average_val_loss, 
                                 current_loss_scaled=current_global_step_loss_scaled, 
                                 average_loss_scaled=average_loss_scaled, 
+                                current_loss_wav=current_global_step_loss_wav,
+                                average_loss_wav=average_loss_wav,
                                 edm2_grad_norm=edm2_grad_norm, 
                                 edm2_grad_norm_clipped=edm2_grad_norm_clipped, 
                                 edm2_lr_scheduler=mlp_lr_scheduler, 
@@ -2858,6 +2968,9 @@ class NetworkTrainer:
                             current_global_step_loss = 0.0
                             if args.edm2_loss_weighting:
                                 current_global_step_loss_scaled = 0.0
+
+                            if args.wavelet_loss:
+                                current_global_step_loss_wav = 0.0
 
                             accumulation_counter = 0
                                             

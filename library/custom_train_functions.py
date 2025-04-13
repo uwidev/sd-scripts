@@ -3,11 +3,22 @@ import argparse
 import random
 import math
 import re
-from typing import List, Optional, Union
 from .utils import setup_logging
 
 setup_logging()
 import logging
+
+import pywt
+from library import train_util
+from diffusers import DDPMScheduler
+import ast
+import json
+
+from torch import Tensor
+from torch import nn
+from torch.types import Number
+import torch.nn.functional as F
+from typing import List, Optional, Union, Protocol, Any
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +125,25 @@ def add_v_prediction_like_loss(loss, timesteps, noise_scheduler, v_pred_like_los
     return loss
 
 
-def apply_debiased_estimation(loss, timesteps, noise_scheduler, v_prediction=False):
-    snr_t = torch.stack([noise_scheduler.all_snr[t] for t in timesteps])  # batch_size
-    snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)  # if timestep is 0, snr_t is inf, so limit it to 1000
+def apply_debiased_estimation(loss: torch.Tensor, timesteps: torch.IntTensor, noise_scheduler: DDPMScheduler, v_prediction=False, image_size=None):
+   # Check if we have SNR values available
+    if not (hasattr(noise_scheduler, "all_snr") or hasattr(noise_scheduler, "get_snr_for_timestep")):
+        return loss
+
+    if hasattr(noise_scheduler, "get_snr_for_timestep") and not callable(noise_scheduler.get_snr_for_timestep):
+        return loss
+
+    # Get SNR values with image_size consideration
+    if hasattr(noise_scheduler, "get_snr_for_timestep") and callable(noise_scheduler.get_snr_for_timestep):
+        snr_t: torch.Tensor = noise_scheduler.get_snr_for_timestep(timesteps, image_size)
+    else:
+        timesteps_indices = train_util.timesteps_to_indices(timesteps, len(noise_scheduler.all_snr))
+        snr_t = torch.stack([noise_scheduler.all_snr[t] for t in timesteps_indices])
+
+    # Cap the SNR to avoid numerical issues
+    snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)
+
+    # Apply weighting based on prediction type
     if v_prediction:
         weight = 1 / (snr_t + 1)
     else:
@@ -127,6 +154,28 @@ def apply_debiased_estimation(loss, timesteps, noise_scheduler, v_prediction=Fal
 
 # TODO train_utilと分散しているのでどちらかに寄せる
 
+def parse_wavelet_weights(weights_str):
+    if weights_str is None:
+        return None
+
+    # Try parsing as a dictionary (for formats like "{'ll1':0.1,'lh1':0.01}")
+    if weights_str.strip().startswith('{'):
+        try:
+            return ast.literal_eval(weights_str)
+        except (ValueError, SyntaxError):
+            try:
+                return json.loads(weights_str.replace("'", '"'))
+            except json.JSONDecodeError:
+                pass
+
+    # Parse format like "ll1=0.1,lh1=0.01,hl1=0.01,hh1=0.05"
+    result = {}
+    for pair in weights_str.split(','):
+        if '=' in pair:
+            key, value = pair.split('=', 1)
+            result[key.strip()] = float(value.strip())
+
+    return result
 
 def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted_captions: bool = True):
     parser.add_argument(
@@ -158,6 +207,17 @@ def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted
             default=False,
             help="Enable weighted captions in the standard style (token:1.3). No commas inside parens, or shuffle/dropout may break the decoder. / 「[token]」、「(token)」「(token:1.3)」のような重み付きキャプションを有効にする。カンマを括弧内に入れるとシャッフルやdropoutで重みづけがおかしくなるので注意",
         )
+
+    parser.add_argument("--wavelet_loss", action="store_true", help="Activate wavelet loss. Default: False")
+    parser.add_argument("--wavelet_loss_alpha", type=float, default=1.0, help="Wavelet loss alpha. Default: 1.0")
+    parser.add_argument("--wavelet_loss_type", help="Wavelet loss type l1, l2, huber, smooth_l1. Default to --loss_type value.")
+    parser.add_argument("--wavelet_loss_transform", default="swt", help="Wavelet transform type of DWT or SWT. Default: swt")
+    parser.add_argument("--wavelet_loss_wavelet", default="sym7", help="Wavelet. Default: sym7")
+    parser.add_argument("--wavelet_loss_level", type=int, default=1, help="Wavelet loss level 1 (main) or 2 (details). Higher levels are available for DWT for higher resolution training. Default: 1")
+    parser.add_argument("--wavelet_loss_rectified_flow", default=True, help="Use rectified flow to estimate clean latents before wavelet loss")
+    parser.add_argument("--wavelet_loss_band_level_weights", type=parse_wavelet_weights, default=None, help="Wavelet loss band level weights. ll1=0.1,lh1=0.01,hl1=0.01,hh1=0.05. Default: None")
+    parser.add_argument("--wavelet_loss_band_weights", type=parse_wavelet_weights, default=None, help="Wavelet loss band weights. ll=0.1,lh=0.01,hl=0.01,hh=0.05. Default: None")
+    parser.add_argument("--wavelet_loss_ll_level_threshold", default=None, help="Wavelet loss which level to calculate the loss for the low frequency (ll). -1 means last n level. Default: None")
 
 
 re_attention = re.compile(
@@ -521,6 +581,288 @@ def apply_masked_loss(loss, batch):
     mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
     loss = loss * mask_image
     return loss
+
+class LossCallableMSE(Protocol):
+    def __call__(
+        self,
+        input: Tensor,
+        target: Tensor,
+        size_average: Optional[bool] = None,
+        reduce: Optional[bool] = None,
+        reduction: str = "mean"
+    ) -> Tensor: ...
+
+class LossCallableReduction(Protocol):
+    def __call__(
+        self,
+        input: Tensor,
+        target: Tensor,
+        reduction: str = "mean"
+    ) -> Tensor: ...
+
+LossCallable = LossCallableReduction | LossCallableMSE
+
+class WaveletTransform:
+    """Base class for wavelet transforms."""
+
+    def __init__(self, wavelet='db4', device=torch.device("cpu")):
+        """Initialize wavelet filters."""
+        assert pywt.Wavelet is not None, "PyWavelets module not available. Please install `pip install PyWavelets`"
+
+        # Create filters from wavelet
+        wav = pywt.Wavelet(wavelet)
+        self.dec_lo = torch.tensor(wav.dec_lo).to(device)
+        self.dec_hi = torch.tensor(wav.dec_hi).to(device)
+
+    def decompose(self, x: Tensor) -> dict[str, list[Tensor]]:
+        """Abstract method to be implemented by subclasses."""
+        raise NotImplementedError("WaveletTransform subclasses must implement decompose method")
+
+
+class DiscreteWaveletTransform(WaveletTransform):
+    """Discrete Wavelet Transform (DWT) implementation."""
+
+    def decompose(self, x: Tensor, level=1) -> dict[str, list[Tensor]]:
+        """
+        Perform multi-level DWT decomposition.
+        
+        Args:
+            x: Input tensor [B, C, H, W]
+            level: Number of decomposition levels
+            
+        Returns:
+            Dictionary containing decomposition coefficients
+        """
+        bands: dict[str, list[Tensor]] = {
+            'll': [],
+            'lh': [], 
+            'hl': [], 
+            'hh': [],
+        }
+
+        # Start low frequency with input
+        ll = x
+
+        for _ in range(level):
+            ll, lh, hl, hh = self._dwt_single_level(ll)
+
+            bands['lh'].append(lh)
+            bands['hl'].append(hl)
+            bands['hh'].append(hh)
+            bands['ll'].append(ll)
+
+        return bands
+
+    def _dwt_single_level(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Perform single-level DWT decomposition."""
+        batch, channels, height, width = x.shape
+        x = x.view(batch * channels, 1, height, width)
+
+        # Pad for proper convolution
+        x_pad = F.pad(x, (self.dec_lo.size(0)//2,) * 4, mode='reflect')
+
+        # Apply filter to rows
+        lo = F.conv2d(x_pad, self.dec_lo.view(1,1,-1,1), stride=(2,1))
+        hi = F.conv2d(x_pad, self.dec_hi.view(1,1,-1,1), stride=(2,1))
+
+        # Apply filter to columns
+        ll = F.conv2d(lo, self.dec_lo.view(1,1,1,-1), stride=(1,2))
+        lh = F.conv2d(lo, self.dec_hi.view(1,1,1,-1), stride=(1,2))
+        hl = F.conv2d(hi, self.dec_lo.view(1,1,1,-1), stride=(1,2))
+        hh = F.conv2d(hi, self.dec_hi.view(1,1,1,-1), stride=(1,2))
+
+        # Reshape back to batch format
+        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(x.device)
+        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(x.device)
+        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(x.device)
+        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(x.device)
+
+        return ll, lh, hl, hh
+
+
+class StationaryWaveletTransform(WaveletTransform):
+    """Stationary Wavelet Transform (SWT) implementation."""
+
+    def decompose(self, x: Tensor, level=1) -> dict[str, list[Tensor]]:
+        """
+        Perform multi-level SWT decomposition.
+        
+        Args:
+            x: Input tensor [B, C, H, W]
+            level: Number of decomposition levels
+            
+        Returns:
+            Dictionary containing decomposition coefficients
+        """
+        bands: dict[str, list[Tensor]] = {
+            'll': [],
+            'lh': [], 
+            'hl': [], 
+            'hh': [],
+        }
+
+        # Start low frequency with input
+        ll = x
+
+        for _ in range(level):
+            ll, lh, hl, hh = self._swt_single_level(ll)
+
+            # For next level, use LL band
+            bands['ll'].append(ll)
+            bands['lh'].append(lh)
+            bands['hl'].append(hl)
+            bands['hh'].append(hh)
+
+        return bands
+
+    def _swt_single_level(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Perform single-level SWT decomposition."""
+        batch, channels, height, width = x.shape
+        x = x.view(batch * channels, 1, height, width)
+
+        # Apply filter to rows
+        x_lo = F.conv2d(F.pad(x, (self.dec_lo.size(0)//2,)*4, mode='reflect'),
+                      self.dec_lo.view(1,1,-1,1).repeat(x.size(1),1,1,1),
+                      groups=x.size(1))
+        x_hi = F.conv2d(F.pad(x, (self.dec_hi.size(0)//2,)*4, mode='reflect'),
+                      self.dec_hi.view(1,1,-1,1).repeat(x.size(1),1,1,1),
+                      groups=x.size(1))
+
+        # Apply filter to columns
+        ll = F.conv2d(x_lo, self.dec_lo.view(1,1,1,-1).repeat(x.size(1),1,1,1), groups=x.size(1))
+        lh = F.conv2d(x_lo, self.dec_hi.view(1,1,1,-1).repeat(x.size(1),1,1,1), groups=x.size(1))
+        hl = F.conv2d(x_hi, self.dec_lo.view(1,1,1,-1).repeat(x.size(1),1,1,1), groups=x.size(1))
+        hh = F.conv2d(x_hi, self.dec_hi.view(1,1,1,-1).repeat(x.size(1),1,1,1), groups=x.size(1))
+
+        # Reshape back to batch format
+        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(x.device)
+        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(x.device)
+        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(x.device)
+        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(x.device)
+
+        return ll, lh, hl, hh
+
+
+class WaveletLoss(nn.Module):
+    """Wavelet-based loss calculation module."""
+
+    def __init__(self, wavelet='db4', level=3, transform_type="dwt", 
+                 loss_fn: Optional[LossCallable]=F.mse_loss, device=torch.device("cpu"), 
+                 band_level_weights: Optional[dict[str, float]]=None, 
+                 band_weights: Optional[dict[str, float]]=None, 
+                 ll_level_threshold: Optional[int]=-1):
+        """
+        Initialize wavelet loss module.
+        
+        Args:
+            wavelet: Wavelet family (e.g., 'db4', 'sym7')
+            level: Decomposition level
+            transform_type: Type of wavelet transform ('dwt' or 'swt')
+            loss_fn: Loss function to apply to wavelet coefficients
+            device: Computation device
+            band_level_weights: Optional custom weights for different bands on different levels
+            band_weights: Optional custom weights for different bands
+        """
+        super().__init__()
+        self.level = level
+        self.wavelet = wavelet
+        self.transform_type = transform_type
+        self.loss_fn = loss_fn
+        self.device = device
+        self.ll_level_threshold = ll_level_threshold if ll_level_threshold is not None else None
+
+        # Initialize transform based on type
+        if transform_type == 'dwt':
+            self.transform = DiscreteWaveletTransform(wavelet, device)
+        else:  # swt
+            self.transform = StationaryWaveletTransform(wavelet, device)
+
+        # Register wavelet filters as module buffers
+        self.register_buffer('dec_lo', self.transform.dec_lo.to(device))
+        self.register_buffer('dec_hi', self.transform.dec_hi.to(device))
+
+        # Default weights from paper:
+        # "Training Generative Image Super-Resolution Models by Wavelet-Domain Losses"
+        self.band_level_weights = band_level_weights or {
+            'll1': 0.1, 'lh1': 0.01, 'hl1': 0.01, 'hh1': 0.05,
+            'll2': 0.1, 'lh2': 0.01, 'hl2': 0.01, 'hh2': 0.05
+        }
+        self.band_weights = band_weights or {'ll': 0.1, 'lh': 0.01, 'hl': 0.01, 'hh': 0.05}
+
+    def forward(self, pred: Tensor, target: Tensor) -> tuple[Tensor, Tensor | None, Tensor | None]:
+        """Calculate wavelet loss between prediction and target."""
+        assert self.loss_fn is not None, "Loss function required for WaveletLoss"
+        # Decompose inputs
+        pred_coeffs = self.transform.decompose(pred, self.level)
+        target_coeffs = self.transform.decompose(target, self.level)
+
+        # Calculate weighted loss
+        loss = torch.tensor(0.0, device=pred.device)
+        combined_hf_pred = []
+        combined_hf_target = []
+
+        for i in range(1, self.level + 1):
+            # Skip LL bands except for ones at or beyond the threshold
+            if self.ll_level_threshold is not None:
+                # If negative it's from the end of the levels else it's the level.
+                ll_threshold = self.ll_level_threshold if self.ll_level_threshold > 0 else self.level + self.ll_level_threshold
+                if ll_threshold >= i:
+                    band = "ll"
+                    weight_key = f'll{i}'
+                    pred_stack = torch.stack(self._pad_tensors(pred_coeffs[band]))
+                    target_stack = torch.stack(self._pad_tensors(target_coeffs[band]))
+                    band_loss = self.band_level_weights.get(weight_key, self.band_weights['ll']) * self.loss_fn(pred_stack, target_stack)
+                    loss += band_loss
+
+            # High frequency bands
+            for band in ['lh', 'hl', 'hh']:
+                weight_key = f'{band}{i}'
+
+                if band in pred_coeffs and band in target_coeffs:
+                    pred_stack = torch.stack(self._pad_tensors(pred_coeffs[band]))
+                    target_stack = torch.stack(self._pad_tensors(target_coeffs[band]))
+                    band_loss = self.band_level_weights.get(weight_key, self.band_weights[band]) * self.loss_fn(pred_stack, target_stack)
+                    loss += band_loss
+
+                    # Collect high frequency bands for visualization
+                    combined_hf_pred.append(pred_coeffs[band][i-1])
+                    combined_hf_target.append(target_coeffs[band][i-1])
+
+        # Combine high frequency bands for visualization
+        if combined_hf_pred and combined_hf_target:
+            combined_hf_pred = self._pad_tensors(combined_hf_pred)
+            combined_hf_target = self._pad_tensors(combined_hf_target)
+
+            combined_hf_pred = torch.cat(combined_hf_pred, dim=1)
+            combined_hf_target = torch.cat(combined_hf_target, dim=1)
+        else:
+            combined_hf_pred = None
+            combined_hf_target = None
+
+        return loss, combined_hf_pred, combined_hf_target
+
+    def _pad_tensors(self, tensors: list[Tensor]) -> list[Tensor]:
+        """Pad tensors to match the largest size."""
+        # Find max dimensions
+        max_h = max(t.shape[2] for t in tensors)
+        max_w = max(t.shape[3] for t in tensors)
+
+        padded_tensors = []
+        for tensor in tensors:
+            h_pad = max_h - tensor.shape[2]
+            w_pad = max_w - tensor.shape[3]
+
+            if h_pad > 0 or w_pad > 0:
+                # Pad bottom and right to match max dimensions
+                padded = F.pad(tensor, (0, w_pad, 0, h_pad))
+                padded_tensors.append(padded)
+            else:
+                padded_tensors.append(tensor)
+
+        return padded_tensors
+
+    def set_loss_fn(self, loss_fn: LossCallable):
+        self.loss_fn = loss_fn
 
 
 """
