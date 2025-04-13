@@ -1635,7 +1635,6 @@ class NetworkTrainer:
             delta_approximator = DeltaApproximator(
                 queue_size=int(args.delta_approximator_queue_size),
                 num_subset=int(args.delta_approximator_subset_size),
-                num_timesteps=1000,  # Standard number of timesteps in DDPM
                 num_samples=int(args.timestep_sampler_sample_num)
             )
             
@@ -3420,7 +3419,7 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timestep_sampler_sample_num",
         type=int,
-        default=25,
+        default=30,
         help="How many timesteps to sample per update pass.",
     )
 
@@ -3461,13 +3460,13 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timestep_sampler_initial_freq",
         type=int,
-        default=3,
+        default=5,
         help="Initial frequency for timestep sampler updates (every N steps)"
     )
     parser.add_argument(
         "--timestep_sampler_final_freq",
         type=int,
-        default=6,
+        default=7,
         help="Final frequency for timestep sampler updates (every N steps)"
     )
 

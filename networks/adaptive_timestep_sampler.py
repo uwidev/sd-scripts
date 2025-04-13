@@ -73,7 +73,7 @@ class TimestepSampler(nn.Module):
         return a, b
     
     @torch.no_grad()
-    def sample_timestep(self, x0, num_timesteps=1000):
+    def sample_timestep(self, x0, min_timestep=0, max_timestep=1000):
         """
         Sample a timestep using the Beta distribution.
         """
@@ -84,9 +84,10 @@ class TimestepSampler(nn.Module):
         u = beta_dist.sample()  # Sample in [0, 1]
         
         # Scale to timestep range and convert to integer
-        t = (u * num_timesteps).long()
+        timesteps = (min_timestep + u * ((max_timestep - 1) - min_timestep)).long()
+        timesteps = torch.clamp(timesteps, min_timestep, max_timestep)
         
-        return t, beta_dist, a, b
+        return timesteps
     
     def log_prob(self, a, b, t, num_timesteps=1000):
         """
@@ -137,17 +138,26 @@ class DeltaApproximator:
     Approximates the impact of gradient updates (Δᵗₖ) using pre-computed 
     predictions before and after network updates.
     """
-    def __init__(self, queue_size=20, num_subset=3, num_timesteps=1000, num_samples=25):
+    def __init__(self, queue_size=20, num_subset=3, num_samples=25):
         self.queue = deque(maxlen=queue_size)
         self.num_subset = num_subset
-        self.num_timesteps = num_timesteps
         self.sampled_timesteps = None
         self.before_predictions = {}  # Store predictions before update
         self.num_samples = num_samples
-        logger.info(f"Initialized DeltaApproximator with queue_size={queue_size}, num_subset={num_subset}, num_timesteps={num_timesteps}")
+        logger.info(f"Initialized DeltaApproximator with queue_size={queue_size}, num_subset={num_subset}")
         
-    def compute_before_predictions(self, args, accelerator, noise_scheduler, latents, 
-                                   batch, unet, text_encoder_conds, weight_dtype, network_trainer):
+    def compute_before_predictions(self, 
+                                   args, 
+                                   accelerator, 
+                                   noise_scheduler, 
+                                   latents, 
+                                   batch, 
+                                   unet, 
+                                   text_encoder_conds, 
+                                   weight_dtype, 
+                                   network_trainer,
+                                   min_timestep=0,
+                                   max_timestep=1000):
         """
         Compute and store model predictions before the network update.
         Called right before optimizer.step().
@@ -158,10 +168,14 @@ class DeltaApproximator:
         
         # Reset storage for this update cycle
         self.before_predictions = {}
+
+        # always define min_timestep and max_timestep up-front
+        min_timestep = 0 if min_timestep is None else min_timestep
+        max_timestep = 1000 if max_timestep is None else max_timestep
         
         # Select timesteps to sample (for efficiency)
-        num_samples = min(self.num_samples, self.num_timesteps)  # Sample a reasonable number of timesteps
-        self.sampled_timesteps = torch.linspace(0, self.num_timesteps-1, num_samples, device=device).long()
+        num_samples = min(self.num_samples, max_timestep - min_timestep)  # Sample a reasonable number of timesteps
+        self.sampled_timesteps = torch.linspace(min_timestep, max_timestep - 1, num_samples, device="cpu").to(dtype=torch.long, device=device)
         
         # Generate one noise to use for all timesteps
         noise = torch.randn_like(latents)
@@ -224,15 +238,21 @@ class DeltaApproximator:
                 
                 # Store for this timestep
                 self.before_predictions[tau.item()] = {
-                    'noise': noise.detach().clone(),
-                    'target': target.detach().clone(),
                     'loss': loss.detach().item()
                 }
             
             logger.info(f"Stored 'before' predictions for {len(self.sampled_timesteps)} timesteps")
     
-    def compute_delta_t_k(self, args, accelerator, noise_scheduler, latents, 
-                          batch, unet, text_encoder_conds, weight_dtype, network_trainer):
+    def compute_delta_t_k(self, 
+                        args, 
+                        accelerator, 
+                        noise_scheduler, 
+                        latents, 
+                        batch, 
+                        unet, 
+                        text_encoder_conds, 
+                        weight_dtype,
+                        network_trainer):
         """
         Compute δᵗₖ,τ by comparing stored 'before' predictions with new 'after' predictions.
         Called right after optimizer.step().
@@ -249,8 +269,6 @@ class DeltaApproximator:
                 
                 # Get stored values
                 stored = self.before_predictions[tau.item()]
-                noise = stored['noise']
-                target = stored['target']
                 loss_before = stored['loss']
                 
                 # Sample noise, sample a random timestep for each image, and add noise to the latents,
@@ -307,7 +325,7 @@ class DeltaApproximator:
                 # Compute delta for this timestep
                 delta_t_k[tau] = loss_before - loss_after
 
-            # clear before
+            # Reset storage
             self.before_predictions = {}
             
             # Interpolate values for non-sampled timesteps
@@ -338,12 +356,16 @@ class DeltaApproximator:
         self.queue.append(delta_t_k)
         logger.info(f"Updated delta queue, current size: {len(self.queue)}/{self.queue.maxlen}")
     
-    def select_subset(self):
+    def select_subset(self, min_timestep=0, max_timestep=1000):
         """Feature selection to identify the most important timesteps."""
         logger.info("Selecting subset of most important timesteps")
         if len(self.queue) <= 1:
+            # always define min_timestep and max_timestep up-front
+            min_timestep = 0 if min_timestep is None else min_timestep
+            max_timestep = 1000 if max_timestep is None else max_timestep
+            
             # If queue is too small, return evenly spaced timesteps
-            subset = np.linspace(0, self.num_timesteps-1, self.num_subset, dtype=int)
+            subset = np.linspace(min_timestep, max_timestep - 1, self.num_subset, dtype=int)
             logger.info(f"Queue too small, using evenly spaced timesteps: {subset}")
             return subset
         

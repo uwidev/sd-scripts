@@ -4092,13 +4092,13 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
     parser.add_argument(
         "--min_timestep",
         type=int,
-        default=None,
+        default=0,
         help="set minimum time step for U-Net training (0~999, default is 0) / U-Net学習時のtime stepの最小値を設定する（0~999で指定、省略時はデフォルト値(0)） ",
     )
     parser.add_argument(
         "--max_timestep",
         type=int,
-        default=None,
+        default=1000,
         help="set maximum time step for U-Net training (1~1000, default is 1000) / U-Net学習時のtime stepの最大値を設定する（1~1000で指定、省略時はデフォルト値(1000)）",
     )
     parser.add_argument(
@@ -6384,7 +6384,7 @@ def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_
             replacement=False
         ).to(dtype=torch.long, device=latents.device)
     elif train and timestep_sampler:
-        timesteps, _, _, _ = timestep_sampler.sample_timestep(batch["images"], noise_scheduler.num_train_timesteps)
+        timesteps = timestep_sampler.sample_timestep(batch["images"], noise_scheduler.num_train_timesteps)
         timesteps = timesteps.to(dtype=torch.long, device=latents.device)
     elif train and args.timestep_sampling != "uniform":
         shift = args.discrete_flow_shift
