@@ -1624,8 +1624,8 @@ class NetworkTrainer:
         if args.adaptive_timestep_sampling:
             timestep_sampler = TimestepSampler(
                 in_channels=3,  # Assuming RGB images
-                hidden_channels=args.timestep_sampler_dim,
-                hidden_depth=args.timestep_sampler_depth,
+                hidden_channels=int(args.timestep_sampler_dim),
+                hidden_depth=int(args.timestep_sampler_depth),
             )
             
             if args.timestep_sampler_weights is not None:
@@ -1633,8 +1633,8 @@ class NetworkTrainer:
                 accelerator.print(f"Loaded timestep sampler weights: {info}")
             
             delta_approximator = DeltaApproximator(
-                queue_size=args.delta_approximator_queue_size,
-                num_subset=args.delta_approximator_subset_size,
+                queue_size=int(args.delta_approximator_queue_size),
+                num_subset=int(args.delta_approximator_subset_size),
                 num_timesteps=1000,  # Standard number of timesteps in DDPM
                 num_samples=int(args.timestep_sampler_sample_num)
             )
@@ -2675,7 +2675,7 @@ class NetworkTrainer:
                                 
                                 # Update timestep sampler (maximize delta_approx + entropy regularization)
                                 # Negative because we want to maximize but optimizers minimize
-                                sampler_loss = -delta_approx - args.timestep_sampler_entropy_coeff * entropy
+                                sampler_loss = -delta_approx - float(args.timestep_sampler_entropy_coeff) * entropy
                                 accelerator.backward(sampler_loss)
                                 sampler_optimizer.step()
                                 sampler_optimizer.zero_grad(set_to_none=True)
