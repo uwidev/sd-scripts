@@ -1784,6 +1784,8 @@ class NetworkTrainer:
         average_loss_wav = 0.0 if args.wavelet_loss else None
         avr_loss = 0.0
         sampler_loss = 0.0
+        gns = 0.0,
+        variance = 0.0
         gradient_stats = {
                 'train/grad_norm/mean': 0.0,
                 'train/grad_norm/median': 0.0,
@@ -1873,6 +1875,10 @@ class NetworkTrainer:
                 mean_grad_norm=mean_grad_norm,
                 mean_combined_norm=mean_combined_norm
             )
+            if args.gradient_noise_scale and hasattr(network, "gradient_noise_scale"):
+                gns, variance = network.gradient_noise_scale()
+                if gns is not None and variance is not None:
+                    logs = {**logs, "gns/gradient_noise_scale": gns, "gns/noise_variance": variance, "gns/critical_batch_size": gns / effective_batch_size}
             accelerator.log(logs, step=0)
 
         # training loop
@@ -1896,7 +1902,7 @@ class NetworkTrainer:
         # Define the number of steps to accumulate gradients
         iter_size = args.gradient_accumulation_steps
         accumulation_counter = 0
-
+        effective_batch_size = 0
 
         if args.grokfast_type:
             if args.grokfast_type.lower() == "ema":
@@ -1941,6 +1947,8 @@ class NetworkTrainer:
 
                 for step, batch in enumerate(skipped_dataloader or train_dataloader):
                     current_step.value = global_step
+                    current_batch_size = len(batch['network_multipliers'])
+                    effective_batch_size += current_batch_size
                     if initial_step > 0:
                         initial_step -= 1
                         continue
@@ -2189,6 +2197,8 @@ class NetworkTrainer:
                             unwrapped_network.update_grad_norms()
                         if hasattr(unwrapped_network, "update_norms"):
                             unwrapped_network.update_norms()
+                        if args.gradient_noise_scale and hasattr(network, "accumulate_grad"):
+                            network.accumulate_grad()
 
                         if args.grokfast_type:
                             grad_filter.filter()
@@ -2427,6 +2437,10 @@ class NetworkTrainer:
                                 mean_grad_norm=mean_grad_norm,
                                 mean_combined_norm=mean_combined_norm
                             )
+                            if args.gradient_noise_scale and hasattr(network, "gradient_noise_scale"):
+                                gns, variance = network.gradient_noise_scale()
+                                if gns is not None and variance is not None:
+                                    logs = {**logs, "gns/gradient_noise_scale": gns, "gns/noise_variance": variance, "gns/critical_batch_size": gns / effective_batch_size}
                             accelerator.log(logs, step=global_step)
                             current_global_step_loss = 0.0
                             if args.edm2_loss_weighting:
@@ -2437,6 +2451,7 @@ class NetworkTrainer:
 
                         # Reset accumulation counter
                         accumulation_counter = 0
+                        effective_batch_size = 0
 
                     if global_step >= args.max_train_steps:
                         break
@@ -2507,6 +2522,8 @@ class NetworkTrainer:
 
                 for step, batch in enumerate(skipped_dataloader or train_dataloader):
                     current_step.value = global_step
+                    current_batch_size = len(batch['network_multipliers'])
+                    effective_batch_size += current_batch_size
                     if initial_step > 0:
                         initial_step -= 1
                         continue
@@ -2712,6 +2729,8 @@ class NetworkTrainer:
                                 unwrapped_network.update_grad_norms()
                             if hasattr(unwrapped_network, "update_norms"):
                                 unwrapped_network.update_norms()
+                            if args.gradient_noise_scale and hasattr(network, "accumulate_grad"):
+                                network.accumulate_grad()
 
                             if args.grokfast_type:
                                 grad_filter.filter()
@@ -2994,6 +3013,10 @@ class NetworkTrainer:
                                 mean_grad_norm=mean_grad_norm,
                                 mean_combined_norm=mean_combined_norm
                             )
+                            if args.gradient_noise_scale and hasattr(network, "gradient_noise_scale"):
+                                gns, variance = network.gradient_noise_scale()
+                                if gns is not None and variance is not None:
+                                    logs = {**logs, "gns/gradient_noise_scale": gns, "gns/noise_variance": variance, "gns/critical_batch_size": gns / effective_batch_size}
                             accelerator.log(logs, step=global_step)
                             current_global_step_loss = 0.0
                             if args.edm2_loss_weighting:
@@ -3003,6 +3026,7 @@ class NetworkTrainer:
                                 current_global_step_loss_wav = 0.0
 
                             accumulation_counter = 0
+                            effective_batch_size = 0
                                             
                     if global_step >= args.max_train_steps:
                         break
