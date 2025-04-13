@@ -2505,7 +2505,6 @@ class NetworkTrainer:
                             unet,
                             network,
                             weight_dtype,
-                            train_unet,
                             not args.network_train_text_encoder_only,
                             timestep_sampler=timestep_sampler,
                         )
