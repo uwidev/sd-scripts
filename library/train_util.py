@@ -5876,13 +5876,21 @@ def get_epoch_loss_weights_ckpt_name(args: argparse.Namespace, ext: str, epoch_n
     model_name = default_if_none(args.output_name, DEFAULT_EPOCH_NAME)
     return EPOCH_FILE_NAME.format(model_name + "_edm2_loss_weights", epoch_no) + ext
 
+def get_epoch_timestep_sampling_ckpt_name(args: argparse.Namespace, ext: str, epoch_no: int):
+    model_name = default_if_none(args.output_name, DEFAULT_EPOCH_NAME)
+    return EPOCH_FILE_NAME.format(model_name + "_timestep_sampling_weights", epoch_no) + ext
+
 def get_epoch_ckpt_name(args: argparse.Namespace, ext: str, epoch_no: int):
     model_name = default_if_none(args.output_name, DEFAULT_EPOCH_NAME)
     return EPOCH_FILE_NAME.format(model_name, epoch_no) + ext
-
+    
 def get_step_loss_weights_ckpt_name(args: argparse.Namespace, ext: str, step_no: int):
     model_name = default_if_none(args.output_name, DEFAULT_STEP_NAME)
     return STEP_FILE_NAME.format(model_name + "_edm2_loss_weights", step_no) + ext
+
+def get_step_timestep_sampling_ckpt_name(args: argparse.Namespace, ext: str, step_no: int):
+    model_name = default_if_none(args.output_name + "_timestep_sampling_weights", DEFAULT_STEP_NAME)
+    return STEP_FILE_NAME.format(model_name, step_no) + ext
 
 def get_step_ckpt_name(args: argparse.Namespace, ext: str, step_no: int):
     model_name = default_if_none(args.output_name, DEFAULT_STEP_NAME)
@@ -5890,6 +5898,10 @@ def get_step_ckpt_name(args: argparse.Namespace, ext: str, step_no: int):
 
 def get_last_loss_weights_ckpt_name(args: argparse.Namespace, ext: str):
     model_name = default_if_none(args.output_name + "_edm2_loss_weights", DEFAULT_LAST_OUTPUT_NAME)
+    return model_name + ext
+
+def get_last_timestep_sampling_ckpt_name(args: argparse.Namespace, ext: str):
+    model_name = default_if_none(args.output_name + "_timestep_sampling_weights", DEFAULT_LAST_OUTPUT_NAME)
     return model_name + ext
 
 def get_last_ckpt_name(args: argparse.Namespace, ext: str):
@@ -6333,7 +6345,7 @@ def immiscible_diffusion(args, noise_scheduler, latents, noise, timesteps):
     x_t_b = sqrt_alpha_t * latents + sqrt_one_minus_alpha_t * noise
     return x_t_b
 
-def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps=None, train=True):
+def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps=None, train=True, timestep_sampler=None, batch=None):
     # always define min_timestep and max_timestep up-front
     min_timestep = 0 if args.min_timestep is None else args.min_timestep
     max_timestep = noise_scheduler.config.num_train_timesteps if args.max_timestep is None else args.max_timestep
@@ -6371,6 +6383,9 @@ def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_
             num_samples=b_size,
             replacement=False
         ).to(dtype=torch.long, device=latents.device)
+    elif train and timestep_sampler:
+        timesteps, _, _, _ = timestep_sampler.sample_timestep(batch["images"], noise_scheduler.num_train_timesteps)
+        timesteps = timesteps.to(dtype=torch.long, device=latents.device)
     elif train and args.timestep_sampling != "uniform":
         shift = args.discrete_flow_shift
         logits_norm = torch.randn(b_size,  device="cpu")

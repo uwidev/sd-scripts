@@ -14,6 +14,7 @@ from tools.grokfast import Gradfilter_ma, Gradfilter_ema
 import numpy as np
 import tools.edm2_loss_mm as edm2_loss_mm
 import ast
+import copy
 
 from tqdm import tqdm
 
@@ -26,6 +27,8 @@ from accelerate.utils import set_seed
 from accelerate import Accelerator, AutocastKwargs
 from diffusers import DDPMScheduler
 from library import deepspeed_utils, model_util, strategy_base, strategy_sd
+
+from networks.adaptive_timestep_sampler import TimestepSampler, DeltaApproximator
 
 import library.train_util as train_util
 from library.train_util import DreamBoothDataset
@@ -54,6 +57,20 @@ import itertools
 import tools.stochastic_accumulator as stochastic_accumulator
 
 logger = logging.getLogger(__name__)
+
+def get_sampling_frequency(global_step, max_steps, initial_freq=3, final_freq=6):
+    """
+    Returns sampling frequency that decays from initial to final as training progresses.
+    Lower number means more frequent sampling.
+    """
+    progress = min(1.0, global_step / (0.75 * max_steps))  # Cap at 75% of training
+    current_freq = initial_freq + (final_freq - initial_freq) * progress
+
+    output = max(1, int(current_freq))
+
+    logger.info("current_freq="+str(output))
+
+    return output
 
 @torch.no_grad()
 def analyze_gradient_norms(parameters):
@@ -226,7 +243,9 @@ class NetworkTrainer:
         gradient_stats=None,
         network_norm_stats=None,
         mean_grad_norm=None,
-        mean_combined_norm=None
+        mean_combined_norm=None,
+        timestep_distribution=None,
+        sampler_loss=None,
     ):
         logs = {"loss/current": current_loss, "loss/average": avr_loss}
 
@@ -256,6 +275,15 @@ class NetworkTrainer:
         if edm2_grad_norm is not None:
             logs["train/edm2_grad_norm"] = edm2_grad_norm
             logs["train/edm2_grad_norm_clipped"] = edm2_grad_norm_clipped
+
+        if timestep_distribution is not None:
+            logs["timestep_sampler/distribution_mean"] = timestep_distribution["mean"]
+            logs["timestep_sampler/distribution_std"] = timestep_distribution["std"]
+            logs["timestep_sampler/distribution_min"] = timestep_distribution["min"]
+            logs["timestep_sampler/distribution_max"] = timestep_distribution["max"]
+        
+        if sampler_loss is not None:
+            logs["timestep_sampler/loss"] = sampler_loss
 
         if gradient_stats:
             logs = {**logs, **gradient_stats}
@@ -417,7 +445,8 @@ class NetworkTrainer:
         weight_dtype,
         train_unet,
         fixed_timesteps=None,
-        train=True
+        train=True,
+        timestep_sampler=None,
     ):
         if args.loss_related_use_float64:
             # Convert to float64, noise and noisy latents will be float64 due to using like on latents
@@ -425,7 +454,7 @@ class NetworkTrainer:
 
         # Sample noise, sample a random timestep for each image, and add noise to the latents,
         # with noise offset and/or multires noise if specified
-        noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps, train)
+        noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps, train, timestep_sampler, batch)
 
         # ensure the hidden state will require grad
         if train and args.gradient_checkpointing:
@@ -1591,6 +1620,53 @@ class NetworkTrainer:
             mlp_lr_scheduler = None
             lossweightMLP = None
 
+        # Initialize timestep sampler and delta approximator if adaptive sampling is enabled
+        if args.adaptive_timestep_sampling:
+            timestep_sampler = TimestepSampler(
+                in_channels=3,  # Assuming RGB images
+                hidden_channels=args.timestep_sampler_dim,
+                hidden_depth=args.timestep_sampler_depth,
+            )
+            
+            if args.timestep_sampler_weights is not None:
+                info = timestep_sampler.load_weights(args.timestep_sampler_weights)
+                accelerator.print(f"Loaded timestep sampler weights: {info}")
+            
+            delta_approximator = DeltaApproximator(
+                queue_size=args.delta_approximator_queue_size,
+                num_subset=args.delta_approximator_subset_size,
+                num_timesteps=1000,  # Standard number of timesteps in DDPM
+                num_samples=int(args.timestep_sampler_sample_num)
+            )
+            
+            values = args.timestep_sampler_optimizer.split(".")
+            optimizer_module = importlib.import_module(".".join(values[:-1]))
+            case_sensitive_optimizer_type = values[-1]
+            opti_args = ast.literal_eval(args.timestep_sampler_optimizer_args)
+            opti_lr = float(args.timestep_sampler_optimizer_lr)
+
+            # Prepare optimizer for timestep sampler
+            sampler_optimizer = getattr(optimizer_module, case_sensitive_optimizer_type)(timestep_sampler.parameters(), lr=opti_lr, **opti_args)
+            
+            sampler_lr_scheduler = train_util.get_scheduler_fix(
+                args=args,
+                optimizer=sampler_optimizer,
+                num_processes=accelerator.num_processes,
+            )
+            
+            # Prepare with accelerator
+            timestep_sampler, sampler_optimizer, sampler_lr_scheduler = accelerator.prepare(
+                timestep_sampler, sampler_optimizer, sampler_lr_scheduler
+            )
+            
+            args.timestep_sampler_initial_freq = int(args.timestep_sampler_initial_freq)
+            args.timestep_sampler_final_freq = int(args.timestep_sampler_final_freq)
+        else:
+            timestep_sampler = None
+            delta_approximator = None
+            sampler_optimizer = None
+            sampler_lr_scheduler = None
+
         if accelerator.is_main_process:
             init_kwargs = {}
             if args.wandb_run_name:
@@ -1665,6 +1741,7 @@ class NetworkTrainer:
         current_global_step_loss_scaled = 0.0 if args.edm2_loss_weighting else None
         average_loss_scaled = 0.0 if args.edm2_loss_weighting else None
         avr_loss = 0.0
+        sampler_loss = 0.0
         gradient_stats = {
                 'train/grad_norm/mean': 0.0,
                 'train/grad_norm/median': 0.0,
@@ -1776,6 +1853,7 @@ class NetworkTrainer:
         iter_size = args.gradient_accumulation_steps
         accumulation_counter = 0
 
+
         if args.grokfast_type:
             if args.grokfast_type.lower() == "ema":
                 grad_filter = Gradfilter_ema(accelerator.unwrap_model(network), 
@@ -1822,6 +1900,15 @@ class NetworkTrainer:
                     if initial_step > 0:
                         initial_step -= 1
                         continue
+
+                    if args.adaptive_timestep_sampling:
+                        current_sampling_freq = get_sampling_frequency(
+                            global_step, 
+                            args.max_train_steps,
+                            args.timestep_sampler_initial_freq,
+                            args.timestep_sampler_final_freq
+                        )
+                        random_accum_batch_index = random.randint(0, args.gradient_accumulation_steps - 1)
 
                     # Determine whether we should synchronize gradients
                     sync_gradients = (accumulation_counter + 1) % iter_size == 0 or (step + 1 == len(skipped_dataloader or train_dataloader))
@@ -1894,7 +1981,6 @@ class NetworkTrainer:
                                     if encoded_text_encoder_conds[i] is not None:
                                         text_encoder_conds[i] = encoded_text_encoder_conds[i]
 
-                        # Get noise prediction and target
                         noise_pred, target, timesteps, weighting, noisy_latents = self.get_noise_pred_and_target(
                             args,
                             accelerator,
@@ -1905,7 +1991,8 @@ class NetworkTrainer:
                             unet,
                             network,
                             weight_dtype,
-                            train_unet,
+                            not args.network_train_text_encoder_only,
+                            timestep_sampler=timestep_sampler,
                         )
 
                         if noise_pred.dtype not in {torch.float32, torch.float64}:
@@ -1974,6 +2061,26 @@ class NetworkTrainer:
                     else:
                         current_global_step_loss_scaled = None
 
+                    # BEFORE THE OPTIMIZER PASS - Calculate and store "before" predictions
+                    if (args.adaptive_timestep_sampling                             
+                        and (global_step % current_sampling_freq == 0) 
+                            and (random_accum_batch_index == accumulation_counter
+                            or sync_gradients)
+                            and not delta_approximator.before_predictions):
+                        logger.info(f"=== Step {global_step}: Adaptive Timestep Before Sampling Update ===")
+                        with torch.no_grad():
+                            delta_approximator.compute_before_predictions(
+                                args,
+                                accelerator,
+                                noise_scheduler,
+                                latents,
+                                batch,
+                                unet,
+                                text_encoder_conds,
+                                weight_dtype,
+                                self
+                            )
+
                     if sync_gradients:
                         # apply grad buffer back
                         stochastic_accumulator.StochasticAccumulator.reassign_grad_buffer(network)
@@ -2037,6 +2144,52 @@ class NetworkTrainer:
 
                         if args.edm2_loss_weighting and mlp_lr_scheduler is not None:
                             mlp_lr_scheduler.step()
+
+                        # AFTER THE OPTIMIZER STEP - Calculate "after" predictions and compute delta
+                        if args.adaptive_timestep_sampling and (global_step % current_sampling_freq == 0):
+                            logger.info(f"=== Step {global_step}: Adaptive Timestep Sampling Update ===")
+                            with torch.no_grad():
+                                delta_t_k = delta_approximator.compute_delta_t_k(
+                                    args,
+                                    accelerator,
+                                    noise_scheduler,
+                                    latents,
+                                    batch,
+                                    unet,
+                                    text_encoder_conds,
+                                    weight_dtype,
+                                    self
+                                )
+                                
+                                # Update queue with delta_t_k
+                                delta_approximator.update_queue(delta_t_k)
+                                
+                                # Select subset of important timesteps
+                                subset = delta_approximator.select_subset()
+                                
+                            if subset is not None:
+                                timestep_sampler.train()
+                                # Sample from current timestep distribution for training
+                                a, b = timestep_sampler(batch["images"].to(device=accelerator.device))
+                                t_sampled = (torch.distributions.Beta(a, b).sample() * noise_scheduler.num_train_timesteps).long()
+                                
+                                # Compute log probabilities and entropy
+                                log_probs = timestep_sampler.log_prob(a, b, t_sampled, noise_scheduler.num_train_timesteps)
+                                entropy = -torch.mean(log_probs)
+                                
+                                # Use the subset to approximate delta
+                                delta_approx = 0.0
+                                for tau in subset:
+                                    delta_approx += delta_t_k[tau]
+                                delta_approx = delta_approx / len(subset)
+                                
+                                # Update timestep sampler (maximize delta_approx + entropy regularization)
+                                # Negative because we want to maximize but optimizers minimize
+                                sampler_loss = -delta_approx - args.timestep_sampler_entropy_coeff * entropy
+                                accelerator.backward(sampler_loss)
+                                sampler_optimizer.step()
+                                sampler_optimizer.zero_grad(set_to_none=True)
+                                timestep_sampler.eval()
 
                         if args.scale_weight_norms:
                             keys_scaled, mean_norm, maximum_norm = accelerator.unwrap_model(network).apply_max_norm_regularization(
@@ -2112,6 +2265,10 @@ class NetworkTrainer:
                                         loss_weights_ckpt_name = train_util.get_step_loss_weights_ckpt_name(args, "." + args.save_model_as, global_step)
                                         save_model(loss_weights_ckpt_name, accelerator.unwrap_model(lossweightMLP), global_step, epoch, dtype_override=torch.float64)
 
+                                    if args.adaptive_timestep_sampling:
+                                        sampler_ckpt_name = train_util.get_step_timestep_sampling_ckpt_name(args, "." + args.save_model_as, global_step)
+                                        save_model(sampler_ckpt_name, accelerator.unwrap_model(timestep_sampler), global_step, epoch, dtype_override=torch.float32)
+
                                     if args.save_state:
                                         train_util.save_and_remove_state_stepwise(args, accelerator, global_step)
 
@@ -2123,6 +2280,11 @@ class NetworkTrainer:
                                         if args.edm2_loss_weighting:
                                             remove_loss_weights_ckpt_name = train_util.get_step_loss_weights_ckpt_name(args, "." + args.save_model_as, remove_step_no)
                                             remove_model(remove_loss_weights_ckpt_name)
+
+                                        if args.adaptive_timestep_sampling:
+                                            sampler_ckpt_name = train_util.get_step_timestep_sampling_ckpt_name(args, "." + args.save_model_as, remove_step_no)
+                                            remove_model(sampler_ckpt_name)
+                                            
                             #Switch network to train mode
                             optimizer_train_fn()
                             network.train()
@@ -2206,6 +2368,10 @@ class NetworkTrainer:
                                 loss_weights_ckpt_name = train_util.get_epoch_loss_weights_ckpt_name(args, "." + args.save_model_as, epoch + 1)
                                 save_model(loss_weights_ckpt_name, accelerator.unwrap_model(lossweightMLP), global_step, epoch + 1, dtype_override=torch.float64)
 
+                            if args.adaptive_timestep_sampling:
+                                sampler_ckpt_name = train_util.get_epoch_timestep_sampling_ckpt_name(args, "." + args.save_model_as, epoch + 1)
+                                save_model(sampler_ckpt_name, accelerator.unwrap_model(timestep_sampler), global_step, epoch + 1, dtype_override=torch.float32)
+
                             remove_epoch_no = train_util.get_remove_epoch_no(args, epoch + 1)
                             if remove_epoch_no is not None:
                                 remove_ckpt_name = train_util.get_epoch_ckpt_name(args, "." + args.save_model_as, remove_epoch_no)
@@ -2214,6 +2380,10 @@ class NetworkTrainer:
                                 if args.edm2_loss_weighting:
                                     remove_loss_weights_ckpt_name = train_util.get_epoch_loss_weights_ckpt_name(args, "." + args.save_model_as, remove_epoch_no)
                                     remove_model(remove_loss_weights_ckpt_name)
+
+                                if args.adaptive_timestep_sampling:
+                                    sampler_ckpt_name = train_util.get_epoch_timestep_sampling_ckpt_name(args, "." + args.save_model_as, remove_epoch_no)
+                                    remove_model(sampler_ckpt_name)
 
                             if args.save_state:
                                 train_util.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
@@ -2240,12 +2410,20 @@ class NetworkTrainer:
                     skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
                     initial_step = 1
 
-
                 for step, batch in enumerate(skipped_dataloader or train_dataloader):
                     current_step.value = global_step
                     if initial_step > 0:
                         initial_step -= 1
                         continue
+
+                    if args.adaptive_timestep_sampling:
+                        current_sampling_freq = get_sampling_frequency(
+                            global_step, 
+                            args.max_train_steps,
+                            args.timestep_sampler_initial_freq,
+                            args.timestep_sampler_final_freq
+                        )
+                        random_accum_batch_index = random.randint(0, args.gradient_accumulation_steps - 1)
 
                     with accelerator.accumulate(training_model, lossweightMLP) if args.edm2_loss_weighting else accelerator.accumulate(training_model):
                         on_step_start_for_network(text_encoder, unet)
@@ -2317,7 +2495,6 @@ class NetworkTrainer:
                                     if encoded_text_encoder_conds[i] is not None:
                                         text_encoder_conds[i] = encoded_text_encoder_conds[i]
 
-                        # Get noise prediction and target
                         noise_pred, target, timesteps, weighting, noisy_latents = self.get_noise_pred_and_target(
                             args,
                             accelerator,
@@ -2329,6 +2506,8 @@ class NetworkTrainer:
                             network,
                             weight_dtype,
                             train_unet,
+                            not args.network_train_text_encoder_only,
+                            timestep_sampler=timestep_sampler,
                         )
 
                         if noise_pred.dtype not in {torch.float32, torch.float64}:
@@ -2413,6 +2592,26 @@ class NetworkTrainer:
                             if args.grokfast_type:
                                 grad_filter.filter()
 
+
+                        # BEFORE THE OPTIMIZER PASS - Calculate and store "before" predictions
+                        if (args.adaptive_timestep_sampling 
+                            and (global_step % current_sampling_freq == 0) 
+                            and (random_accum_batch_index == accumulation_counter
+                            or accelerator.sync_gradients)
+                            and not delta_approximator.before_predictions):
+                            with torch.no_grad():
+                                delta_approximator.compute_before_predictions(
+                                    args,
+                                    accelerator,
+                                    noise_scheduler,
+                                    latents,
+                                    batch,
+                                    unet,
+                                    text_encoder_conds,
+                                    weight_dtype,
+                                    self
+                                )
+
                         optimizer.step()
 
                         if args.edm2_loss_weighting:
@@ -2438,6 +2637,49 @@ class NetworkTrainer:
 
                         if args.edm2_loss_weighting:
                             MLP_optim.zero_grad(set_to_none=True)
+
+                        # AFTER THE OPTIMIZER STEP - Calculate "after" predictions and compute delta
+                        if args.adaptive_timestep_sampling and accelerator.sync_gradients and (global_step % current_sampling_freq == 0):
+                            with torch.no_grad():
+                                delta_t_k = delta_approximator.compute_delta_t_k(
+                                    args,
+                                    accelerator,
+                                    noise_scheduler,
+                                    latents,
+                                    batch,
+                                    unet,
+                                    text_encoder_conds,
+                                    weight_dtype,
+                                    self
+                                )
+                                
+                                # Update queue with delta_t_k
+                                delta_approximator.update_queue(delta_t_k)
+                                
+                                # Select subset of important timesteps
+                                subset = delta_approximator.select_subset()
+                                
+                            if subset is not None:
+                                # Sample from current timestep distribution for training
+                                a, b = timestep_sampler(batch["images"].to(device=accelerator.device))
+                                t_sampled = (torch.distributions.Beta(a, b).sample() * noise_scheduler.num_train_timesteps).long()
+                                
+                                # Compute log probabilities and entropy
+                                log_probs = timestep_sampler.log_prob(a, b, t_sampled, noise_scheduler.num_train_timesteps)
+                                entropy = -torch.mean(log_probs)
+                                
+                                # Use the subset to approximate delta
+                                delta_approx = 0.0
+                                for tau in subset:
+                                    delta_approx += delta_t_k[tau]
+                                delta_approx = delta_approx / len(subset)
+                                
+                                # Update timestep sampler (maximize delta_approx + entropy regularization)
+                                # Negative because we want to maximize but optimizers minimize
+                                sampler_loss = -delta_approx - args.timestep_sampler_entropy_coeff * entropy
+                                accelerator.backward(sampler_loss)
+                                sampler_optimizer.step()
+                                sampler_optimizer.zero_grad(set_to_none=True)
 
                     # Should only scale weight norms AFTER an actual optimizer step, not unaccumulated steps
                     # thus should check if accelerator.sync_gradients is true
@@ -2536,6 +2778,10 @@ class NetworkTrainer:
                                         loss_weights_ckpt_name = train_util.get_step_loss_weights_ckpt_name(args, "." + args.save_model_as, global_step)
                                         save_model(loss_weights_ckpt_name, accelerator.unwrap_model(lossweightMLP), global_step, epoch, dtype_override=torch.float64)
 
+                                    if args.adaptive_timestep_sampling:
+                                        sampler_ckpt_name = train_util.get_step_timestep_sampling_ckpt_name(args, "." + args.save_model_as, global_step)
+                                        save_model(sampler_ckpt_name, accelerator.unwrap_model(timestep_sampler), global_step, epoch, dtype_override=torch.float32)
+
                                     if args.save_state:
                                         train_util.save_and_remove_state_stepwise(args, accelerator, global_step)
 
@@ -2547,6 +2793,10 @@ class NetworkTrainer:
                                         if args.edm2_loss_weighting:
                                             remove_loss_weights_ckpt_name = train_util.get_step_loss_weights_ckpt_name(args, "." + args.save_model_as, remove_step_no)
                                             remove_model(remove_loss_weights_ckpt_name)
+
+                                        if args.adaptive_timestep_sampling:
+                                            sampler_ckpt_name = train_util.get_step_timestep_sampling_ckpt_name(args, "." + args.save_model_as, remove_step_no)
+                                            remove_model(sampler_ckpt_name)
 
                             #Switch network to train mode
                             optimizer_train_fn()
@@ -2639,6 +2889,10 @@ class NetworkTrainer:
                                 loss_weights_ckpt_name = train_util.get_epoch_loss_weights_ckpt_name(args, "." + args.save_model_as, epoch + 1)
                                 save_model(loss_weights_ckpt_name, accelerator.unwrap_model(lossweightMLP), global_step, epoch + 1, dtype_override=torch.float64)
 
+                            if args.adaptive_timestep_sampling:
+                                sampler_ckpt_name = train_util.get_epoch_timestep_sampling_ckpt_name(args, "." + args.save_model_as, epoch + 1)
+                                save_model(sampler_ckpt_name, accelerator.unwrap_model(timestep_sampler), global_step, epoch + 1, dtype_override=torch.float32)
+
                             remove_epoch_no = train_util.get_remove_epoch_no(args, epoch + 1)
                             if remove_epoch_no is not None:
                                 remove_ckpt_name = train_util.get_epoch_ckpt_name(args, "." + args.save_model_as, remove_epoch_no)
@@ -2647,6 +2901,10 @@ class NetworkTrainer:
                                 if args.edm2_loss_weighting:
                                     remove_loss_weights_ckpt_name = train_util.get_epoch_loss_weights_ckpt_name(args, "." + args.save_model_as, remove_epoch_no)
                                     remove_model(remove_loss_weights_ckpt_name)
+
+                                if args.adaptive_timestep_sampling:
+                                    sampler_ckpt_name = train_util.get_epoch_timestep_sampling_ckpt_name(args, "." + args.save_model_as, remove_epoch_no)
+                                    remove_model(sampler_ckpt_name)
 
                             if args.save_state:
                                 train_util.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
@@ -2679,6 +2937,10 @@ class NetworkTrainer:
             if args.edm2_loss_weighting:
                 loss_weights_ckpt_name = train_util.get_last_loss_weights_ckpt_name(args, "." + args.save_model_as)
                 save_model(loss_weights_ckpt_name, lossweightMLP, global_step, num_train_epochs, force_sync_upload=True, dtype_override=torch.float64)
+
+            if args.adaptive_timestep_sampling:
+                sampler_ckpt_name = train_util.get_last_timestep_sampling_ckpt_name(args, "." + args.save_model_as)
+                save_model(sampler_ckpt_name, timestep_sampler, global_step, num_train_epochs, force_sync_upload=True, dtype_override=torch.float32)
 
             logger.info("model saved.")
 
@@ -3123,6 +3385,91 @@ def setup_parser() -> argparse.ArgumentParser:
         "--disable_training_clip_g",
         action="store_true",
         help="Disable training clip g (second te), only effective if training TEs."
+    )
+
+    # Adaptive non-uniform timestep sampling arguments
+    parser.add_argument(
+        "--adaptive_timestep_sampling",
+        action="store_true",
+        help="Use adaptive non-uniform timestep sampling to accelerate diffusion model training",
+    )
+    parser.add_argument(
+        "--timestep_sampler_dim",
+        type=int,
+        default=192,
+        help="Dimension of the timestep sampler network",
+    )
+    parser.add_argument(
+        "--timestep_sampler_depth",
+        type=int,
+        default=2,
+        help="Depth of the timestep sampler network",
+    )
+    parser.add_argument(
+        "--delta_approximator_queue_size",
+        type=int,
+        default=20,
+        help="Size of the queue for the delta approximator",
+    )
+    parser.add_argument(
+        "--delta_approximator_subset_size",
+        type=int,
+        default=3,
+        help="Size of the subset for the delta approximator",
+    )
+
+    parser.add_argument(
+        "--timestep_sampler_sample_num",
+        type=int,
+        default=25,
+        help="How many timesteps to sample per update pass.",
+    )
+
+    parser.add_argument(
+        "--timestep_sampler_entropy_coeff",
+        type=float,
+        default=1e-2,
+        help="Entropy regularization coefficient for the timestep sampler",
+    )
+    parser.add_argument(
+        "--timestep_sampler_weights",
+        type=str,
+        default=None,
+        help="Pre-trained weights for the timestep sampler",
+    )
+
+    parser.add_argument(
+        "--timestep_sampler_optimizer",
+        type=str,
+        default="torch.optim.AdamW",
+        help="Fully qualified optimizer class name to use with the timestep_sampler_optimizer.",
+    )
+
+    parser.add_argument(
+        "--timestep_sampler_optimizer_lr",
+        type=float,
+        default=1e-2,
+        help="Learning rate as a float for the timestep_sampler_optimizer.",
+    )
+
+    parser.add_argument(
+        "--timestep_sampler_optimizer_args",
+        type=str,
+        default=r"{'weight_decay': 0, 'betas': (0.9,0.99)}",
+        help="A JSON object as a string of optimizer args for the timestep_sampler_optimizer.",
+    )
+
+    parser.add_argument(
+        "--timestep_sampler_initial_freq",
+        type=int,
+        default=3,
+        help="Initial frequency for timestep sampler updates (every N steps)"
+    )
+    parser.add_argument(
+        "--timestep_sampler_final_freq",
+        type=int,
+        default=6,
+        help="Final frequency for timestep sampler updates (every N steps)"
     )
 
     # parser.add_argument("--loraplus_lr_ratio", default=None, type=float, help="LoRA+ learning rate ratio")
