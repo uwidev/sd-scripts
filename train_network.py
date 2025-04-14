@@ -2074,11 +2074,10 @@ class NetworkTrainer:
                                 def loss_fn(input: torch.Tensor, target: torch.Tensor, reduction: str = "mean"):
                                     # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
                                     # To get the noise scheduler, timesteps, and latents
-                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, latents, noise_scheduler)
+                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
                                     return train_util.conditional_loss(input.float(), target.float(), loss_type, reduction, huber_c)
 
                                 return loss_fn
-
 
                             self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args))
 
@@ -2648,7 +2647,7 @@ class NetworkTrainer:
                                 def loss_fn(input: torch.Tensor, target: torch.Tensor, reduction: str = "mean"):
                                     # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
                                     # To get the noise scheduler, timesteps, and latents
-                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, latents, noise_scheduler)
+                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
                                     return train_util.conditional_loss(input.float(), target.float(), loss_type, reduction, huber_c)
 
                                 return loss_fn
@@ -2981,7 +2980,7 @@ class NetworkTrainer:
 
                             if args.wavelet_loss:
                                 current_global_step_loss_wav = (current_global_step_loss_wav / accumulation_counter)
-                                average_loss_wav: float = loss_scaled_recorder.moving_average
+                                average_loss_wav: float = loss_wav_recorder.moving_average
                             else:
                                 current_global_step_loss_wav = None
                                 average_loss_wav = None
