@@ -1684,6 +1684,9 @@ class NetworkTrainer:
             sampler_lr_scheduler = None
 
         if args.wavelet_loss:
+            args.wavelet_loss_alpha = float(args.wavelet_loss_alpha)
+
+
             self.wavelet_loss = WaveletLoss(
                 wavelet=args.wavelet_loss_wavelet, 
                 level=int(args.wavelet_loss_level), 
@@ -2952,6 +2955,11 @@ class NetworkTrainer:
                         current_global_step_loss_scaled += loss_scaled.detach().item()
                     else:
                         current_global_step_loss_scaled = None
+
+                    if args.wavelet_loss:
+                        current_global_step_loss_wav += wav_loss.detach().item()
+                    else:
+                        current_global_step_loss_wav = None
 
                     if accelerator.sync_gradients:
                         loss_recorder.add(epoch=epoch, step=global_step, loss=current_global_step_loss / accumulation_counter)
