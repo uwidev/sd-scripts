@@ -209,7 +209,7 @@ def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted
         )
 
     parser.add_argument("--wavelet_loss", action="store_true", help="Activate wavelet loss. Default: False")
-    parser.add_argument("--wavelet_loss_alpha", type=float, default=1.0, help="Wavelet loss alpha. Default: 1.0")
+    parser.add_argument("--wavelet_loss_alpha", type=float, default=0.98, help="Wavelet loss alpha. Default: 1.0")
     parser.add_argument("--wavelet_loss_type", help="Wavelet loss type l1, l2, huber, smooth_l1. Default to --loss_type value.")
     parser.add_argument("--wavelet_loss_transform", default="swt", help="Wavelet transform type of DWT or SWT. Default: swt")
     parser.add_argument("--wavelet_loss_wavelet", default="sym7", help="Wavelet. Default: sym7")
