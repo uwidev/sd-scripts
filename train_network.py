@@ -2608,7 +2608,7 @@ class NetworkTrainer:
                                         input_ids,
                                     )
                                 if args.full_fp16:
-                                    encoded_text_encoder_conds = [c.to(dtype=weight_dtype) for c in encoded_text_encoder_conds]
+                                    encoded_text_encoder_conds = [c for c in encoded_text_encoder_conds]
 
                             # if text_encoder_conds is not cached, use encoded_text_encoder_conds
                             if len(text_encoder_conds) == 0:
