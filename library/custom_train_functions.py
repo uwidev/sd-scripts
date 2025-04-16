@@ -162,10 +162,12 @@ def parse_wavelet_weights(weights_str):
     if weights_str.strip().startswith('{'):
         try:
             return ast.literal_eval(weights_str)
-        except (ValueError, SyntaxError):
+        except (ValueError, SyntaxError) as e1:
+            print(e1)
             try:
                 return json.loads(weights_str.replace("'", '"'))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e2:
+                print(e2)
                 pass
 
     # Parse format like "ll1=0.1,lh1=0.01,hl1=0.01,hh1=0.05"
@@ -214,9 +216,9 @@ def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted
     parser.add_argument("--wavelet_loss_transform", default="swt", help="Wavelet transform type of DWT or SWT. Default: swt")
     parser.add_argument("--wavelet_loss_wavelet", default="sym7", help="Wavelet. Default: sym7")
     parser.add_argument("--wavelet_loss_level", type=int, default=1, help="Wavelet loss level 1 (main) or 2 (details). Higher levels are available for DWT for higher resolution training. Default: 1")
-    parser.add_argument("--wavelet_loss_rectified_flow", default=True, help="Use rectified flow to estimate clean latents before wavelet loss")
-    parser.add_argument("--wavelet_loss_band_level_weights", type=parse_wavelet_weights, default=None, help="Wavelet loss band level weights. ll1=0.1,lh1=0.01,hl1=0.01,hh1=0.05. Default: None")
-    parser.add_argument("--wavelet_loss_band_weights", type=parse_wavelet_weights, default=None, help="Wavelet loss band weights. ll=0.1,lh=0.01,hl=0.01,hh=0.05. Default: None")
+    #parser.add_argument("--wavelet_loss_rectified_flow", default=True, help="Use rectified flow to estimate clean latents before wavelet loss")
+    parser.add_argument("--wavelet_loss_band_level_weights", type=parse_wavelet_weights, default=r"{'ll1': 0.1, 'lh1': 0.01, 'hl1': 0.01, 'hh1': 0.05,'ll2': 0.1, 'lh2': 0.01, 'hl2': 0.01, 'hh2': 0.05}", help="Wavelet loss band level weights. Default: ll1=0.1,lh1=0.01,hl1=0.01,hh1=0.05.")
+    parser.add_argument("--wavelet_loss_band_weights", type=parse_wavelet_weights, default=r"{'ll': 0.1, 'lh': 0.01, 'hl': 0.01, 'hh': 0.05}", help="Wavelet loss band weights. Default: ll=0.1,lh=0.01,hl=0.01,hh=0.05.")
     parser.add_argument("--wavelet_loss_ll_level_threshold", default=None, help="Wavelet loss which level to calculate the loss for the low frequency (ll). -1 means last n level. Default: None")
 
 
@@ -812,6 +814,7 @@ class WaveletLoss(nn.Module):
                     pred_stack = torch.stack(self._pad_tensors(pred_coeffs[band]))
                     target_stack = torch.stack(self._pad_tensors(target_coeffs[band]))
                     band_loss = self.band_level_weights.get(weight_key, self.band_weights['ll']) * self.loss_fn(pred_stack, target_stack)
+                    band_loss = band_loss.mean()
                     loss += band_loss
 
             # High frequency bands
@@ -822,6 +825,7 @@ class WaveletLoss(nn.Module):
                     pred_stack = torch.stack(self._pad_tensors(pred_coeffs[band]))
                     target_stack = torch.stack(self._pad_tensors(target_coeffs[band]))
                     band_loss = self.band_level_weights.get(weight_key, self.band_weights[band]) * self.loss_fn(pred_stack, target_stack)
+                    band_loss = band_loss.mean()
                     loss += band_loss
 
                     # Collect high frequency bands for visualization

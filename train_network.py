@@ -1361,8 +1361,8 @@ class NetworkTrainer:
             "ss_wavelet_loss_band_weights": json.dumps(args.wavelet_loss_band_weights) if args.wavelet_loss_band_weights is not None else None,
             "ss_wavelet_loss_band_level_weights": json.dumps(args.wavelet_loss_band_level_weights) if args.wavelet_loss_band_weights is not None else None,
             "ss_wavelet_loss_ll_level_threshold": args.wavelet_loss_ll_level_threshold,
-            "ss_wavelet_loss_rectified_flow": args.wavelet_loss_rectified_flow,
         }
+            #"ss_wavelet_loss_rectified_flow": args.wavelet_loss_rectified_flow,
 
         self.update_metadata(metadata, args)  # architecture specific metadata
 
@@ -2064,80 +2064,79 @@ class NetworkTrainer:
                         if target.dtype not in {torch.float32, torch.float64}:
                             target = target.float()
 
-                        huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
-                        # Compute loss
-                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c, scale=float(args.loss_scale))
+                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                            huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+                            # Compute loss
+                            loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c, scale=float(args.loss_scale))
 
-                        wav_loss = None
-                        if args.wavelet_loss:
-                            #if args.wavelet_loss_rectified_flow:
-                                # Calculate flow-based clean estimate using the target
-                            #    flow_based_clean = noisy_latents - sigmas.view(-1, 1, 1, 1) * target
+                            wav_loss = None
+                            if args.wavelet_loss:
+                                def wavelet_loss_fn(args, accelerator):
+                                    loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
+                                    def loss_fn(noise_pred: torch.Tensor, target: torch.Tensor, scale: float = 1.0):
+                                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                                            # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
+                                            # To get the noise scheduler, timesteps, and latents
 
-                                # Calculate model-based denoised estimate
-                            #    model_denoised = noisy_latents - sigmas.view(-1, 1, 1, 1) * noise_pred
-                            #else:
-                            flow_based_clean = target
-                            model_denoised = noise_pred
+                                            if noise_pred.dtype not in {torch.float32, torch.float64}:
+                                                noise_pred = noise_pred.float()
 
-                            def wavelet_loss_fn(args):
-                                loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
-                                def loss_fn(input: torch.Tensor, target: torch.Tensor, reduction: str = "mean"):
-                                    # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
-                                    # To get the noise scheduler, timesteps, and latents
-                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
-                                    return train_util.conditional_loss(input.float(), target.float(), loss_type, reduction, huber_c)
+                                            if target.dtype not in {torch.float32, torch.float64}:
+                                                target = target.float()
 
-                                return loss_fn
+                                            huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+                                            return train_util.conditional_loss(noise_pred, target, loss_type, "none", huber_c, scale=scale)
 
-                            self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args))
+                                    return loss_fn
 
-                            wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(model_denoised.float(), flow_based_clean.float())
-                            # Weight the losses as needed
-                            #loss = loss + args.wavelet_loss_alpha * wav_loss
-                            loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
+                                self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args, accelerator))
 
-                        if weighting is not None:
-                            loss = loss * weighting
-                        if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-                            loss = apply_masked_loss(loss, batch)
-                        loss = loss.mean(dim=[1, 2, 3])  # Mean over dimensions
+                                wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(noise_pred, target)
+                                # Weight the losses as needed
+                                #loss = loss + args.wavelet_loss_alpha * wav_loss
+                                loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
 
-                        loss_weights = batch["loss_weights"]  # Sample-wise weights
-                        loss = loss * loss_weights
+                            if weighting is not None:
+                                loss = loss * weighting
+                            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+                                loss = apply_masked_loss(loss, batch)
+                            loss = loss.mean(dim=[1, 2, 3])  # Mean over dimensions
 
-                        if args.sangoi_loss_modifier:
-                            # Min SNR should be zero for zero_terminal_snr
-                            if args.zero_terminal_snr:
-                                min_snr = 0
-                            else:
-                                min_snr = float(args.sangoi_loss_modifier_min_snr)
+                            loss_weights = batch["loss_weights"]  # Sample-wise weights
+                            loss = loss * loss_weights
 
-                            loss = loss * train_util.sangoi_loss_modifier(timesteps, 
-                                                                    noise_pred, 
-                                                                    target, 
-                                                                    noise_scheduler,
-                                                                    min_snr,
-                                                                    float(args.sangoi_loss_modifier_max_snr))
+                            if args.sangoi_loss_modifier:
+                                # Min SNR should be zero for zero_terminal_snr
+                                if args.zero_terminal_snr:
+                                    min_snr = 0
+                                else:
+                                    min_snr = float(args.sangoi_loss_modifier_min_snr)
 
-                        # min snr gamma, scale v pred loss like noise pred, v pred like loss, debiased estimation etc.
-                        loss = self.post_process_loss(loss, args, timesteps, noise_scheduler)
+                                loss = loss * train_util.sangoi_loss_modifier(timesteps, 
+                                                                        noise_pred, 
+                                                                        target, 
+                                                                        noise_scheduler,
+                                                                        min_snr,
+                                                                        float(args.sangoi_loss_modifier_max_snr))
 
-                        if args.loss_multipler or args.loss_multiplier:
-                            loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
+                            # min snr gamma, scale v pred loss like noise pred, v pred like loss, debiased estimation etc.
+                            loss = self.post_process_loss(loss, args, timesteps, noise_scheduler)
 
-                        # For logging
-                        pre_scaling_loss = loss.mean()
+                            if args.loss_multipler or args.loss_multiplier:
+                                loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
 
-                        if args.edm2_loss_weighting:
-                            loss, loss_scaled = lossweightMLP(loss, timesteps)
-                            loss_scaled = loss_scaled.mean()
-                            loss_scaled = loss_scaled * grad_accum_loss_scaling
+                            # For logging
+                            pre_scaling_loss = loss.mean()
 
-                        loss = loss.mean()  # Mean over batch
+                            if args.edm2_loss_weighting:
+                                loss, loss_scaled = lossweightMLP(loss, timesteps)
+                                loss_scaled = loss_scaled.mean()
+                                loss_scaled = loss_scaled * grad_accum_loss_scaling
 
-                        # Divide loss by iter_size to average over accumulated steps
-                        loss = loss * grad_accum_loss_scaling
+                            loss = loss.mean()  # Mean over batch
+
+                            # Divide loss by iter_size to average over accumulated steps
+                            loss = loss * grad_accum_loss_scaling
 
                         # Backward pass
                         accelerator.backward(loss)
@@ -2619,6 +2618,7 @@ class NetworkTrainer:
                                     if encoded_text_encoder_conds[i] is not None:
                                         text_encoder_conds[i] = encoded_text_encoder_conds[i]
 
+
                         noise_pred, target, timesteps, weighting, noisy_latents = self.get_noise_pred_and_target(
                             args,
                             accelerator,
@@ -2639,77 +2639,75 @@ class NetworkTrainer:
                         if target.dtype not in {torch.float32, torch.float64}:
                             target = target.float()
 
-                        huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
-                        # Compute loss
-                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c, scale=float(args.loss_scale))
+                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                            huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+                            # Compute loss
+                            loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c, scale=float(args.loss_scale))
 
-                        wav_loss = None
-                        if args.wavelet_loss:
-                            #if args.wavelet_loss_rectified_flow:
-                                # Calculate flow-based clean estimate using the target
-                            #    flow_based_clean = noisy_latents - sigmas.view(-1, 1, 1, 1) * target
+                            wav_loss = None
+                            if args.wavelet_loss:
+                                def wavelet_loss_fn(args, accelerator):
+                                    loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
+                                    def loss_fn(noise_pred: torch.Tensor, target: torch.Tensor, scale: float = 1.0):
+                                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                                            # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
+                                            # To get the noise scheduler, timesteps, and latents
 
-                                # Calculate model-based denoised estimate
-                            #    model_denoised = noisy_latents - sigmas.view(-1, 1, 1, 1) * noise_pred
-                            #else:
-                            flow_based_clean = target
-                            model_denoised = noise_pred
+                                            if noise_pred.dtype not in {torch.float32, torch.float64}:
+                                                noise_pred = noise_pred.float()
 
-                            def wavelet_loss_fn(args):
-                                loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
-                                def loss_fn(input: torch.Tensor, target: torch.Tensor, reduction: str = "mean"):
-                                    # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
-                                    # To get the noise scheduler, timesteps, and latents
-                                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
-                                    return train_util.conditional_loss(input.float(), target.float(), loss_type, reduction, huber_c)
+                                            if target.dtype not in {torch.float32, torch.float64}:
+                                                target = target.float()
 
-                                return loss_fn
+                                            huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+                                            return train_util.conditional_loss(noise_pred, target, loss_type, "none", huber_c, scale=scale)
 
+                                    return loss_fn
 
-                            self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args))
+                                self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args, accelerator))
 
-                            wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(model_denoised.float(), flow_based_clean.float())
-                            # Weight the losses as needed
-                            #loss = loss + args.wavelet_loss_alpha * wav_loss
-                            loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
+                                wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(noise_pred, target)
+                                # Weight the losses as needed
+                                #loss = loss + args.wavelet_loss_alpha * wav_loss
+                                loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
 
-                        if weighting is not None:
-                            loss = loss * weighting
-                        if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-                            loss = apply_masked_loss(loss, batch)
-                        loss = loss.mean(dim=[1, 2, 3])
+                            if weighting is not None:
+                                loss = loss * weighting
+                            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+                                loss = apply_masked_loss(loss, batch)
+                            loss = loss.mean(dim=[1, 2, 3])
 
-                        loss_weights = batch["loss_weights"]  # 各sampleごとのweight
-                        loss = loss * loss_weights
+                            loss_weights = batch["loss_weights"]  # 各sampleごとのweight
+                            loss = loss * loss_weights
 
-                        if args.sangoi_loss_modifier:
-                            # Min SNR should be zero for zero_terminal_snr
-                            if args.zero_terminal_snr:
-                                min_snr = 0
-                            else:
-                                min_snr = float(args.sangoi_loss_modifier_min_snr)
+                            if args.sangoi_loss_modifier:
+                                # Min SNR should be zero for zero_terminal_snr
+                                if args.zero_terminal_snr:
+                                    min_snr = 0
+                                else:
+                                    min_snr = float(args.sangoi_loss_modifier_min_snr)
 
-                            loss = loss * train_util.sangoi_loss_modifier(timesteps, 
-                                                                    noise_pred, 
-                                                                    target, 
-                                                                    noise_scheduler,
-                                                                    min_snr,
-                                                                    float(args.sangoi_loss_modifier_max_snr))
+                                loss = loss * train_util.sangoi_loss_modifier(timesteps, 
+                                                                        noise_pred, 
+                                                                        target, 
+                                                                        noise_scheduler,
+                                                                        min_snr,
+                                                                        float(args.sangoi_loss_modifier_max_snr))
 
-                        # min snr gamma, scale v pred loss like noise pred, v pred like loss, debiased estimation etc.
-                        loss = self.post_process_loss(loss, args, timesteps, noise_scheduler)
+                            # min snr gamma, scale v pred loss like noise pred, v pred like loss, debiased estimation etc.
+                            loss = self.post_process_loss(loss, args, timesteps, noise_scheduler)
 
-                        if args.loss_multipler or args.loss_multiplier:
-                            loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
+                            if args.loss_multipler or args.loss_multiplier:
+                                loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
 
-                        # For logging
-                        pre_scaling_loss = loss.mean()
+                            # For logging
+                            pre_scaling_loss = loss.mean()
 
-                        if args.edm2_loss_weighting:
-                            loss, loss_scaled = lossweightMLP(loss, timesteps)
-                            loss_scaled = loss_scaled.mean()
+                            if args.edm2_loss_weighting:
+                                loss, loss_scaled = lossweightMLP(loss, timesteps)
+                                loss_scaled = loss_scaled.mean()
 
-                        loss = loss.mean()  # Mean over batch
+                            loss = loss.mean()  # Mean over batch
                         
                         accelerator.backward(loss)
 
