@@ -10,6 +10,7 @@ init_ipex()
 from library import sdxl_model_util, sdxl_train_util, strategy_base, strategy_sd, strategy_sdxl, train_util
 import train_network
 from library.utils import setup_logging
+from tools.stochastic_copy import to_stochastic
 
 setup_logging()
 import logging
@@ -114,7 +115,7 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
             # When TE is not be trained, it will not be prepared so we need to use explicit autocast
             text_encoders[0].to(accelerator.device, dtype=weight_dtype)
             text_encoders[1].to(accelerator.device, dtype=weight_dtype)
-            with accelerator.autocast(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+            with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
                 dataset.new_cache_text_encoder_outputs(text_encoders + [accelerator.unwrap_model(text_encoders[-1])], accelerator)
             accelerator.wait_for_everyone()
 
@@ -133,9 +134,9 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
 
     def get_text_cond(self, args, accelerator, batch, tokenizers, text_encoders, weight_dtype):
         if "text_encoder_outputs1_list" not in batch or batch["text_encoder_outputs1_list"] is None:
-            input_ids1 = batch["input_ids"]
-            input_ids2 = batch["input_ids2"]
             with torch.enable_grad(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                input_ids1 = batch["input_ids"]
+                input_ids2 = batch["input_ids2"]
                 # Get the text embedding for conditioning
                 # TODO support weighted captions
                 # if args.weighted_captions:
@@ -158,13 +159,13 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
                     tokenizers[1],
                     text_encoders[0],
                     text_encoders[1],
-                    None if not args.full_fp16 else weight_dtype,
+                    None if not args.full_fp16 else torch.float64 if args.loss_related_use_float64 else weight_dtype,
                     accelerator=accelerator,
                 )
         else:
-            encoder_hidden_states1 = batch["text_encoder_outputs1_list"].to(accelerator.device).to(weight_dtype)
-            encoder_hidden_states2 = batch["text_encoder_outputs2_list"].to(accelerator.device).to(weight_dtype)
-            pool2 = batch["text_encoder_pool2_list"].to(accelerator.device).to(weight_dtype)
+            encoder_hidden_states1 = batch["text_encoder_outputs1_list"].to(accelerator.device).to(torch.float64 if args.loss_related_use_float64 else weight_dtype)
+            encoder_hidden_states2 = batch["text_encoder_outputs2_list"].to(accelerator.device).to(torch.float64 if args.loss_related_use_float64 else weight_dtype)
+            pool2 = batch["text_encoder_pool2_list"].to(accelerator.device).to(torch.float64 if args.loss_related_use_float64 else weight_dtype)
 
             # # verify that the text encoder outputs are correct
             # ehs1, ehs2, p2 = train_util.get_hidden_states_sdxl(
@@ -197,28 +198,27 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
         weight_dtype,
         indices: Optional[List[int]] = None,
     ):
-        noisy_latents = noisy_latents.to(weight_dtype)  # TODO check why noisy_latents is not weight_dtype
-
-        # get size embeddings
-        orig_size = batch["original_sizes_hw"]
-        crop_size = batch["crop_top_lefts"]
-        target_size = batch["target_sizes_hw"]
         with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
-            embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device).to(weight_dtype)
+            # get size embeddings
+            orig_size = batch["original_sizes_hw"]
+            crop_size = batch["crop_top_lefts"]
+            target_size = batch["target_sizes_hw"]
+            embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device, 
+                                                       dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
 
-        # concat embeddings
-        encoder_hidden_states1, encoder_hidden_states2, pool2 = text_conds
-        vector_embedding = torch.cat([pool2, embs], dim=1).to(weight_dtype)
-        text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2).to(weight_dtype)
+            # concat embeddings
+            encoder_hidden_states1, encoder_hidden_states2, pool2 = text_conds
+            vector_embedding = torch.cat([pool2, embs], dim=1)
+            text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2)
 
-        if indices is not None and len(indices) > 0:
-            noisy_latents = noisy_latents[indices]
-            timesteps = timesteps[indices]
-            text_embedding = text_embedding[indices]
-            vector_embedding = vector_embedding[indices]
+            if indices is not None and len(indices) > 0:
+                noisy_latents = noisy_latents[indices]
+                timesteps = timesteps[indices]
+                text_embedding = text_embedding[indices]
+                vector_embedding = vector_embedding[indices]
 
-        noise_pred = unet(noisy_latents, timesteps, text_embedding, vector_embedding)
-        return noise_pred
+            noise_pred = unet(to_stochastic(noisy_latents, dtype=weight_dtype), timesteps, to_stochastic(text_embedding, dtype=weight_dtype), to_stochastic(vector_embedding, dtype=weight_dtype))
+            return noise_pred
 
     def sample_images(self, accelerator, args, epoch, global_step, device, vae, tokenizer, text_encoder, unet):
         sdxl_train_util.sample_images(accelerator, args, epoch, global_step, device, vae, tokenizer, text_encoder, unet)

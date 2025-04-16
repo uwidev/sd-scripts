@@ -21,6 +21,8 @@ from tqdm import tqdm
 import torch
 from library.device_utils import init_ipex, clean_memory_on_device
 
+from tools.stochastic_copy import to_stochastic
+
 init_ipex()
 
 from accelerate.utils import set_seed
@@ -400,7 +402,8 @@ class NetworkTrainer:
             t_enc.to(device=accelerator.device, dtype=weight_dtype)
 
     def call_unet(self, args, accelerator, unet, noisy_latents, timesteps, text_conds, batch, weight_dtype, **kwargs):
-        noise_pred = unet(noisy_latents, timesteps, text_conds[0]).sample
+        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+            noise_pred = unet(to_stochastic(noisy_latents, dtype=weight_dtype), timesteps, to_stochastic(text_conds[0], dtype=weight_dtype)).sample
         return noise_pred
 
     def all_reduce_network(self, accelerator, network):
@@ -455,71 +458,72 @@ class NetworkTrainer:
         train=True,
         timestep_sampler=None,
     ):
-        if args.loss_related_use_float64:
-            # Convert to float64, noise and noisy latents will be float64 due to using like on latents
-            latents = latents.to(torch.float64)
+        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+            if args.loss_related_use_float64:
+                # Convert to float64, noise and noisy latents will be float64 due to using like on latents
+                latents = latents.to(torch.float64)
 
-        # Sample noise, sample a random timestep for each image, and add noise to the latents,
-        # with noise offset and/or multires noise if specified
-        noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps, train, timestep_sampler, batch)
+            # Sample noise, sample a random timestep for each image, and add noise to the latents,
+            # with noise offset and/or multires noise if specified
+            noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps, train, timestep_sampler, batch)
 
-        # ensure the hidden state will require grad
-        if train and args.gradient_checkpointing:
-            for x in noisy_latents:
-                x.requires_grad_(True)
-            for t in text_encoder_conds:
-                t.requires_grad_(True)
+            # ensure the hidden state will require grad
+            if train and args.gradient_checkpointing:
+                for x in noisy_latents:
+                    x.requires_grad_(True)
+                for t in text_encoder_conds:
+                    t.requires_grad_(True)
 
-        # Predict the noise residual
-        with accelerator.autocast():
-            noise_pred = self.call_unet(
-                args,
-                accelerator,
-                unet,
-                noisy_latents.requires_grad_(train and train_unet),
-                timesteps,
-                text_encoder_conds,
-                batch,
-                weight_dtype,
-            )
+            # Predict the noise residual
+            with torch.autocast(enabled=not args.loss_related_use_float64, device_type=str(accelerator.device)):
+                noise_pred = self.call_unet(
+                    args,
+                    accelerator,
+                    unet,
+                    noisy_latents.requires_grad_(train and train_unet),
+                    timesteps,
+                    text_encoder_conds,
+                    batch,
+                    weight_dtype,
+                )
 
-        if args.loss_related_use_float64:
-            noise_pred = noise_pred.to(torch.float64)
+            if args.loss_related_use_float64:
+                noise_pred = noise_pred.to(torch.float64)
 
-        if args.v_parameterization:
-            # v-parameterization training
-            target = noise_scheduler.get_velocity(latents, noise, timesteps)
-        else:
-            target = noise
+            if args.v_parameterization:
+                # v-parameterization training
+                target = noise_scheduler.get_velocity(latents, noise, timesteps)
+            else:
+                target = noise
 
-        if args.loss_related_use_float64:
-            target = target.to(torch.float64)
+            if args.loss_related_use_float64:
+                target = target.to(torch.float64)
 
-        # differential output preservation
-        if "custom_attributes" in batch:
-            diff_output_pr_indices = []
-            for i, custom_attributes in enumerate(batch["custom_attributes"]):
-                if "diff_output_preservation" in custom_attributes and custom_attributes["diff_output_preservation"]:
-                    diff_output_pr_indices.append(i)
+            # differential output preservation
+            if "custom_attributes" in batch:
+                diff_output_pr_indices = []
+                for i, custom_attributes in enumerate(batch["custom_attributes"]):
+                    if "diff_output_preservation" in custom_attributes and custom_attributes["diff_output_preservation"]:
+                        diff_output_pr_indices.append(i)
 
-            if len(diff_output_pr_indices) > 0:
-                network.set_multiplier(0.0)
-                with torch.no_grad(), accelerator.autocast():
-                    noise_pred_prior = self.call_unet(
-                        args,
-                        accelerator,
-                        unet,
-                        noisy_latents,
-                        timesteps,
-                        text_encoder_conds,
-                        batch,
-                        weight_dtype,
-                        indices=diff_output_pr_indices,
-                    )
-                network.set_multiplier(1.0)  # may be overwritten by "network_multipliers" in the next step
-                target[diff_output_pr_indices] = noise_pred_prior.to(target.dtype)
+                if len(diff_output_pr_indices) > 0:
+                    network.set_multiplier(0.0)
+                    with torch.no_grad(), torch.autocast(enabled=not args.loss_related_use_float64, device_type=str(accelerator.device)):
+                        noise_pred_prior = self.call_unet(
+                            args,
+                            accelerator,
+                            unet,
+                            noisy_latents,
+                            timesteps,
+                            text_encoder_conds,
+                            batch,
+                            weight_dtype,
+                            indices=diff_output_pr_indices,
+                        )
+                    network.set_multiplier(1.0)  # may be overwritten by "network_multipliers" in the next step
+                    target[diff_output_pr_indices] = noise_pred_prior.to(target.dtype)
 
-        return noise_pred, target, timesteps, None, noisy_latents
+            return noise_pred, target, timesteps, None, noisy_latents
     
     def determine_grad_sync_context(self, accelerator, sync_gradients, training_model, lossweightMLP = None):
         if not sync_gradients and accelerator.num_processes > 1:
@@ -576,7 +580,7 @@ class NetworkTrainer:
         total_loss = 0.0 
         with torch.autograd.grad_mode.inference_mode(mode=True):
             if "latents" in batch and batch["latents"] is not None:
-                latents = batch["latents"].to(device=accelerator.device, dtype=weight_dtype)
+                latents = batch["latents"].to(device=accelerator.device)
             else:
                 if args.cache_latents:
                     clean_memory_on_device(accelerator.device)
@@ -600,7 +604,9 @@ class NetworkTrainer:
                     vae.to(device="cpu")
                     clean_memory_on_device(accelerator.device)
 
-            latents = self.shift_scale_latents(args, latents)
+            with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                latents = latents.to(dtype=torch.float64 if args.loss_related_use_float64 else weight_dtype)
+                latents = self.shift_scale_latents(args, latents)
 
             network_has_multiplier = hasattr(network, "set_multiplier")
             # get multiplier for each sample
@@ -619,7 +625,7 @@ class NetworkTrainer:
             if text_encoder_outputs_list is not None:
                 text_encoder_conds = text_encoder_outputs_list  # List of text encoder outputs
             if len(text_encoder_conds) == 0 or text_encoder_conds[0] is None or train_text_encoder:
-                with accelerator.autocast():
+                with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
                     # Get the text embedding for conditioning
                     if args.weighted_captions:
                         input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
@@ -637,7 +643,7 @@ class NetworkTrainer:
                             input_ids,
                         )
                         if args.full_fp16:
-                            encoded_text_encoder_conds = [c.to(dtype=weight_dtype) for c in encoded_text_encoder_conds]
+                            encoded_text_encoder_conds = [c for c in encoded_text_encoder_conds]
 
                 # if text_encoder_conds is not cached, use encoded_text_encoder_conds
                 if len(text_encoder_conds) == 0:
@@ -650,7 +656,7 @@ class NetworkTrainer:
 
             batch_size = latents.shape[0]
             for fixed_timesteps in timesteps_list:
-                with accelerator.autocast():
+                with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
                     timesteps = torch.full((batch_size,), fixed_timesteps, dtype=torch.long, device=latents.device)
 
                     # Get noise prediction and target
@@ -1995,7 +2001,9 @@ class NetworkTrainer:
                                     accelerator.print("NaN found in latents, replacing with zeros")
                                     latents = torch.nan_to_num(latents, 0, out=latents)
 
-                        latents = self.shift_scale_latents(args, latents)
+                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                            latents = latents.to(dtype=torch.float64 if args.loss_related_use_float64 else weight_dtype)
+                            latents = self.shift_scale_latents(args, latents)
 
                         # Handle network multipliers
                         if network_has_multiplier:
@@ -2009,7 +2017,7 @@ class NetworkTrainer:
                         # Prepare text encoder conditions
                         text_encoder_conds = batch.get("text_encoder_outputs_list", [])
                         if not text_encoder_conds or text_encoder_conds[0] is None or train_text_encoder:
-                            with torch.set_grad_enabled(train_text_encoder), accelerator.autocast():
+                            with torch.set_grad_enabled(train_text_encoder), torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
                                 # Get the text embeddings
                                 if args.weighted_captions:
                                     input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
@@ -2027,7 +2035,7 @@ class NetworkTrainer:
                                         input_ids,
                                     )
                                 if args.full_fp16:
-                                    encoded_text_encoder_conds = [c.to(dtype=weight_dtype) for c in encoded_text_encoder_conds]
+                                    encoded_text_encoder_conds = [c for c in encoded_text_encoder_conds]
                             # Update text encoder conditions
                             if not text_encoder_conds:
                                 text_encoder_conds = encoded_text_encoder_conds
@@ -2560,7 +2568,9 @@ class NetworkTrainer:
                                     accelerator.print("NaN found in latents, replacing with zeros")
                                     latents = torch.nan_to_num(latents, 0, out=latents)
 
-                        latents = self.shift_scale_latents(args, latents)
+                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                            latents = latents.to(dtype=torch.float64 if args.loss_related_use_float64 else weight_dtype)
+                            latents = self.shift_scale_latents(args, latents)
 
                         # get multiplier for each sample
                         if network_has_multiplier:
@@ -2580,7 +2590,7 @@ class NetworkTrainer:
 
                         if len(text_encoder_conds) == 0 or text_encoder_conds[0] is None or train_text_encoder:
                             # TODO this does not work if 'some text_encoders are trained' and 'some are not and not cached'
-                            with torch.set_grad_enabled(train_text_encoder), accelerator.autocast():
+                            with torch.set_grad_enabled(train_text_encoder), torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
                                 # Get the text embedding for conditioning
                                 if args.weighted_captions:
                                     input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
