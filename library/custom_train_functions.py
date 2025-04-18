@@ -213,6 +213,9 @@ def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted
     parser.add_argument("--wavelet_loss_alpha", type=float, default=0.98, help="Wavelet loss alpha. Default: 0.98")
     parser.add_argument("--wavelet_loss_type", help="Wavelet loss type l1, l2, huber, smooth_l1. Default to --loss_type value.")
     parser.add_argument("--wavelet_loss_delta", help="For loss types that are adjustable via beta/delta/scale/huber_c etc. Defaults to huber_c.")
+    parser.add_argument("--wavelet_loss_schedule", 
+                        choices=["constant", "exponential", "snr"],
+                        help="For loss types that are schedulable.")
     parser.add_argument("--wavelet_loss_transform", default="swt", help="Wavelet transform type of DWT or SWT. Default: swt")
     parser.add_argument("--wavelet_loss_wavelet", default="sym7", help="Wavelet. Default: sym7")
     parser.add_argument("--wavelet_loss_level", type=int, default=1, help="Wavelet loss level 1 (main) or 2 (details). Higher levels are available for DWT for higher resolution training. Default: 1")

@@ -6544,19 +6544,39 @@ def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_
     return noise, noisy_latents, timesteps
 
 
-def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler, huber_c_override: float = None) -> Optional[torch.Tensor]:
+def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler) -> Optional[torch.Tensor]:
     if args.loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
         return None
-    
-    huber_c = huber_c_override if huber_c_override is not None else args.huber_c
 
     b_size = timesteps.shape[0]
-    if args.huber_schedule in {"constant", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
-        result = torch.full((b_size,), huber_c * float(args.huber_scale), device=timesteps.device)
+    if args.huber_schedule == "constant":
+        result = torch.full((b_size,), args.huber_c * float(args.huber_scale), device=timesteps.device)
     elif args.huber_schedule == "exponential":
-        alpha = -math.log(huber_c) / noise_scheduler.config.num_train_timesteps
+        alpha = -math.log(args.huber_c) / noise_scheduler.config.num_train_timesteps
         result = torch.exp(-alpha * timesteps) * float(args.huber_scale)
     elif args.huber_schedule == "snr":
+        if not hasattr(noise_scheduler, "alphas_cumprod"):
+            raise NotImplementedError("Huber schedule 'snr' is not supported with the current model.")
+        alphas_cumprod = torch.index_select(noise_scheduler.alphas_cumprod, 0, timesteps)
+        sigmas = ((1.0 - alphas_cumprod) / alphas_cumprod) ** 0.5
+        result = (1 - args.huber_c) / (1 + sigmas) ** 2 + args.huber_c
+        result = result.to(timesteps.device)
+    else:
+        raise NotImplementedError(f"Unknown Huber loss schedule {args.huber_schedule}!")
+
+    return result
+
+def get_huber_threshold_if_needed_manual(loss_type, huber_c, huber_scale, huber_schedule, timesteps: torch.Tensor, noise_scheduler) -> Optional[torch.Tensor]:
+    if loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
+        return None
+
+    b_size = timesteps.shape[0]
+    if huber_schedule == "constant":
+        result = torch.full((b_size,), huber_c * float(huber_scale), device=timesteps.device)
+    elif huber_schedule == "exponential":
+        alpha = -math.log(huber_c) / noise_scheduler.config.num_train_timesteps
+        result = torch.exp(-alpha * timesteps) * float(huber_scale)
+    elif huber_schedule == "snr":
         if not hasattr(noise_scheduler, "alphas_cumprod"):
             raise NotImplementedError("Huber schedule 'snr' is not supported with the current model.")
         alphas_cumprod = torch.index_select(noise_scheduler.alphas_cumprod, 0, timesteps)
@@ -6564,7 +6584,7 @@ def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler
         result = (1 - huber_c) / (1 + sigmas) ** 2 + huber_c
         result = result.to(timesteps.device)
     else:
-        raise NotImplementedError(f"Unknown Huber loss schedule {args.huber_schedule}!")
+        raise NotImplementedError(f"Unknown Huber loss schedule {huber_schedule}!")
 
     return result
 
@@ -6850,23 +6870,18 @@ def conditional_loss(
     elif loss_type == "l1":
         loss = stable_l1_loss(model_pred, target, reduction=reduction, eps=eps)
     elif loss_type == "standard_pseudo_huber":
-        huber_c = huber_c.view(-1, 1, 1, 1)
         loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c[0].item(), reduction=reduction, eps=eps)
     elif loss_type == "standard_huber":
-        huber_c = huber_c.view(-1, 1, 1, 1)
         loss = stable_huber_loss(model_pred, target, reduction=reduction, delta=huber_c[0].item(), eps=eps)
     elif loss_type == "standard_smooth_l1":
-        huber_c = huber_c.view(-1, 1, 1, 1)
         loss = stable_smooth_l1_loss(model_pred, target, reduction=reduction, beta=huber_c[0].item(), eps=eps)
     elif loss_type == "huber":
-        huber_c = huber_c.view(-1, 1, 1, 1)
         loss = 2 * huber_c * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
         if reduction == "mean":
             loss = torch.mean(loss)
         elif reduction == "sum":
             loss = torch.sum(loss)
     elif loss_type == "smooth_l1":
-        huber_c = huber_c.view(-1, 1, 1, 1)
         loss = 2 * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
         if reduction == "mean":
             loss = torch.mean(loss)
@@ -6879,10 +6894,8 @@ def conditional_loss(
     elif loss_type == "squared_logarithmic":
         loss = stable_msle_loss(model_pred, target, reduction=reduction)
     elif loss_type == "soft_welsch":
-        huber_c = huber_c.view(-1, 1, 1, 1)
         loss = soft_welsch_loss(model_pred, target, reduction=reduction, delta=huber_c, scale=scale)
     elif loss_type == "scaled_quadratic":
-        huber_c = huber_c.view(-1, 1, 1, 1)
         loss = scaled_quadratic_loss(model_pred, target, reduction=reduction, delta=huber_c, eps=eps)
     elif loss_type == "standard_deviation_loss":
         loss = standard_deviation_loss(model_pred, target, reduction=reduction)

@@ -2075,12 +2075,21 @@ class NetworkTrainer:
                                 def wavelet_loss_fn(args, accelerator):
                                     loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
                                     if args.wavelet_loss_delta is not None:
-                                        huber_c_override = float(args.wavelet_loss_delta)
+                                        determined_huber_c = float(args.wavelet_loss_delta)
                                     elif args.huber_c:
-                                        huber_c_override = args.huber_c
+                                        determined_huber_c = args.huber_c
                                     else:
                                         # safe default
-                                        huber_c_override = 1.5
+                                        determined_huber_c = 1.5
+
+                                    if args.wavelet_loss_schedule is not None:
+                                        determined_huber_schedule = args.wavelet_loss_schedule
+                                    elif args.huber_schedule:
+                                        determined_huber_schedule = args.huber_schedule
+                                    else:
+                                        # safe default
+                                        determined_huber_schedule = "snr"
+
                                     def loss_fn(noise_pred: torch.Tensor, target: torch.Tensor, scale: float = 1.0):
                                         with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
                                             # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
@@ -2092,7 +2101,12 @@ class NetworkTrainer:
                                             if target.dtype not in {torch.float32, torch.float64}:
                                                 target = target.float()
 
-                                            huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler, huber_c_override=huber_c_override)
+                                            huber_c = train_util.get_huber_threshold_if_needed_manual(loss_type, 
+                                                                                                      determined_huber_c, 
+                                                                                                      args.huber_scale, 
+                                                                                                      determined_huber_schedule,
+                                                                                                      timesteps, 
+                                                                                                      noise_scheduler)
                                             return train_util.conditional_loss(noise_pred, target, loss_type, "none", huber_c, scale=scale)
 
                                     return loss_fn
@@ -2656,14 +2670,22 @@ class NetworkTrainer:
                             if args.wavelet_loss:
                                 def wavelet_loss_fn(args, accelerator):
                                     loss_type = args.wavelet_loss_type if args.wavelet_loss_type is not None else args.loss_type
-
                                     if args.wavelet_loss_delta is not None:
-                                        huber_c_override = float(args.wavelet_loss_delta)
+                                        determined_huber_c = float(args.wavelet_loss_delta)
                                     elif args.huber_c:
-                                        huber_c_override = args.huber_c
+                                        determined_huber_c = args.huber_c
                                     else:
                                         # safe default
-                                        huber_c_override = 1.5
+                                        determined_huber_c = 1.5
+
+                                    if args.wavelet_loss_schedule is not None:
+                                        determined_huber_schedule = args.wavelet_loss_schedule
+                                    elif args.huber_schedule:
+                                        determined_huber_schedule = args.huber_schedule
+                                    else:
+                                        # safe default
+                                        determined_huber_schedule = "snr"
+
                                     def loss_fn(noise_pred: torch.Tensor, target: torch.Tensor, scale: float = 1.0):
                                         with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
                                             # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
@@ -2675,7 +2697,12 @@ class NetworkTrainer:
                                             if target.dtype not in {torch.float32, torch.float64}:
                                                 target = target.float()
 
-                                            huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler, huber_c_override=huber_c_override)
+                                            huber_c = train_util.get_huber_threshold_if_needed_manual(loss_type, 
+                                                                                                      determined_huber_c, 
+                                                                                                      args.huber_scale, 
+                                                                                                      determined_huber_schedule,
+                                                                                                      timesteps, 
+                                                                                                      noise_scheduler)
                                             return train_util.conditional_loss(noise_pred, target, loss_type, "none", huber_c, scale=scale)
 
                                     return loss_fn
