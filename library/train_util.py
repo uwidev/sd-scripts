@@ -6817,8 +6817,7 @@ def stable_huber_loss(predictions, targets, reduction: str = 'mean', delta=1.0, 
     return loss
 
 def stable_l1_loss(predictions, targets, reduction: str = 'mean', eps=1e-37):
-    diff = torch.abs(predictions.to(torch.float64) - targets.to(torch.float64))
-    loss = torch.abs(diff)
+    loss = torch.abs(predictions.to(torch.float64) - targets.to(torch.float64))
 
     loss = loss.add(eps)
     
