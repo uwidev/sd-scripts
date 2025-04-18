@@ -6544,27 +6544,30 @@ def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_
     return noise, noisy_latents, timesteps
 
 
-def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler) -> Optional[torch.Tensor]:
+def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler, huber_c_override: float = None) -> Optional[torch.Tensor]:
     if args.loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
         return None
+    
+    huber_c = huber_c_override if huber_c_override is not None else args.huber_c
 
     b_size = timesteps.shape[0]
     if args.huber_schedule in {"constant", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
-        result = torch.full((b_size,), args.huber_c * float(args.huber_scale), device=timesteps.device)
+        result = torch.full((b_size,), huber_c * float(args.huber_scale), device=timesteps.device)
     elif args.huber_schedule == "exponential":
-        alpha = -math.log(args.huber_c) / noise_scheduler.config.num_train_timesteps
+        alpha = -math.log(huber_c) / noise_scheduler.config.num_train_timesteps
         result = torch.exp(-alpha * timesteps) * float(args.huber_scale)
     elif args.huber_schedule == "snr":
         if not hasattr(noise_scheduler, "alphas_cumprod"):
             raise NotImplementedError("Huber schedule 'snr' is not supported with the current model.")
         alphas_cumprod = torch.index_select(noise_scheduler.alphas_cumprod, 0, timesteps)
         sigmas = ((1.0 - alphas_cumprod) / alphas_cumprod) ** 0.5
-        result = (1 - args.huber_c) / (1 + sigmas) ** 2 + args.huber_c
+        result = (1 - huber_c) / (1 + sigmas) ** 2 + huber_c
         result = result.to(timesteps.device)
     else:
         raise NotImplementedError(f"Unknown Huber loss schedule {args.huber_schedule}!")
 
     return result
+
 
 def calculate_val_loss_check(args, global_step, epoch_step, val_dataloader, train_dataloader) -> bool:
     if val_dataloader is None:
@@ -6662,7 +6665,7 @@ def x_sigmoid_loss(predictions, targets, reduction="mean"):
         raise ValueError(f"Unsupported reduction type: {reduction}")
     return loss
 
-def pseudo_huber_loss(predictions, targets, delta=1.0, reduction="mean"):
+def stable_pseudo_huber_loss(predictions, targets, delta=1.0, reduction="mean", eps: float = 1e-37):
     """
     Compute the Pseudo-Huber loss between true values and predictions.
 
@@ -6679,11 +6682,12 @@ def pseudo_huber_loss(predictions, targets, delta=1.0, reduction="mean"):
     loss : array_like
         The Pseudo-Huber loss values for each element.
     """
-    differences = predictions - targets
-    # Compute the loss
-    loss = delta**2 * (torch.sqrt(1 + (differences / delta)**2) - 1)
-    # Apply the specified reduction method
+    differences = predictions.to(torch.float64) - targets.to(torch.float64)
 
+    # Compute the loss
+    loss = delta**2 * (torch.sqrt(1 + (differences / delta)**2 + eps) - 1)
+    
+    # Apply the specified reduction method
     if reduction == "mean":
         loss = torch.mean(loss)
     elif reduction == "sum":
@@ -6749,28 +6753,112 @@ def standard_deviation_loss(
         raise ValueError(f"Unsupported reduction type: {reduction}")
     return loss
 
+def stable_smooth_l1_loss(predictions, targets, reduction: str = 'mean', beta=1.0, eps=1e-37):
+    """
+    Custom implementation of Smooth L1 Loss
+    
+    Args:
+        predictions: Tensor of predictions
+        targets: Tensor of target values
+        beta: The threshold parameter that determines the switch point (default: 1.0)
+    
+    Returns:
+        The computed Smooth L1 Loss
+    """
+    diff = torch.abs(predictions.to(torch.float64) - targets.to(torch.float64))
+    condition = diff < beta
+    
+    # Where diff < beta, use quadratic form
+    quadratic = 0.5 * diff.pow(2) / beta
+
+    # Add eps to address underflows due to squaring
+    loss = quadratic.add(eps)
+    
+    # Where diff >= beta, use linear form
+    linear = diff - 0.5 * beta
+    
+    # Combine the two parts based on the condition
+    loss = torch.where(condition, quadratic, linear)
+    
+    # Return loss
+    if reduction == "mean":
+        loss = torch.mean(loss)
+    elif reduction == "sum":
+        loss = torch.sum(loss)
+    elif reduction == "none":
+        loss = loss
+    else:
+        raise ValueError(f"Unsupported reduction type: {reduction}")
+    return loss
+
+
+def stable_huber_loss(predictions, targets, reduction: str = 'mean', delta=1.0, eps=1e-37):
+    diff = torch.abs(predictions.to(torch.float64) - targets.to(torch.float64))
+    abs_error = torch.abs(diff)
+    
+    # For small errors (≤ delta): use squared error (L2)
+    quadratic = 0.5 * diff.pow(2) + eps
+    
+    # For large errors (> delta): use modified absolute error (L1)
+    linear = delta * (abs_error - 0.5 * delta)
+    
+    # Combine both parts
+    loss = torch.where(abs_error <= delta, quadratic, linear)
+    
+    # Return loss
+    if reduction == "mean":
+        loss = torch.mean(loss)
+    elif reduction == "sum":
+        loss = torch.sum(loss)
+    elif reduction == "none":
+        loss = loss
+    else:
+        raise ValueError(f"Unsupported reduction type: {reduction}")
+    return loss
+
+def stable_l1_loss(predictions, targets, reduction: str = 'mean', eps=1e-37):
+    diff = torch.abs(predictions.to(torch.float64) - targets.to(torch.float64))
+    loss = torch.abs(diff)
+
+    loss = loss.add(eps)
+    
+    # Return loss
+    if reduction == "mean":
+        loss = torch.mean(loss)
+    elif reduction == "sum":
+        loss = torch.sum(loss)
+    elif reduction == "none":
+        loss = loss
+    else:
+        raise ValueError(f"Unsupported reduction type: {reduction}")
+    return loss
+
 def conditional_loss(
     model_pred: torch.Tensor, 
     target: torch.Tensor, 
     loss_type: str, 
     reduction: str,
     huber_c: Optional[torch.Tensor] = None,
-    eps: float = 1e-8,
+    eps: float = None,
     scale: float = 1.0,
 ):
+    if eps is None or eps <= 0.0:
+        eps = torch.finfo(torch.float32).tiny
+
+
     if loss_type == "l2":
-        loss = stable_mse_loss(model_pred, target, reduction=reduction, eps=torch.finfo(torch.float32).tiny)
+        loss = stable_mse_loss(model_pred, target, reduction=reduction, eps=eps)
     elif loss_type == "l1":
-        loss = torch.nn.functional.l1_loss(model_pred, target, reduction=reduction)
+        loss = stable_l1_loss(model_pred, target, reduction=reduction, eps=eps)
     elif loss_type == "standard_pseudo_huber":
         huber_c = huber_c.view(-1, 1, 1, 1)
-        loss = pseudo_huber_loss(model_pred, target, delta=huber_c, reduction=reduction)
+        loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c[0].item(), reduction=reduction, eps=eps)
     elif loss_type == "standard_huber":
         huber_c = huber_c.view(-1, 1, 1, 1)
-        loss = torch.nn.functional.huber_loss(model_pred, target, reduction=reduction, delta=huber_c[0].item())
+        loss = stable_huber_loss(model_pred, target, reduction=reduction, delta=huber_c[0].item(), eps=eps)
     elif loss_type == "standard_smooth_l1":
         huber_c = huber_c.view(-1, 1, 1, 1)
-        loss = torch.nn.functional.smooth_l1_loss(model_pred, target, reduction=reduction, beta=huber_c[0].item())
+        loss = stable_smooth_l1_loss(model_pred, target, reduction=reduction, beta=huber_c[0].item(), eps=eps)
     elif loss_type == "huber":
         huber_c = huber_c.view(-1, 1, 1, 1)
         loss = 2 * huber_c * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
@@ -6796,14 +6884,14 @@ def conditional_loss(
         loss = soft_welsch_loss(model_pred, target, reduction=reduction, delta=huber_c, scale=scale)
     elif loss_type == "scaled_quadratic":
         huber_c = huber_c.view(-1, 1, 1, 1)
-        loss = scaled_quadratic_loss(model_pred, target, reduction=reduction, delta=huber_c, eps=torch.finfo(torch.float32).tiny)
+        loss = scaled_quadratic_loss(model_pred, target, reduction=reduction, delta=huber_c, eps=eps)
     elif loss_type == "standard_deviation_loss":
         loss = standard_deviation_loss(model_pred, target, reduction=reduction)
     elif loss_type == "psnr_loss":
         model_pred = model_pred.to(torch.float64)
         target = target.to(torch.float64)
         loss = kornia.losses.psnr_loss(model_pred, target, 1.0)
-        loss = loss.add(torch.finfo(torch.float32).tiny)
+        loss = loss.add(eps)
         if reduction == "mean":
             loss = torch.mean(loss)
         elif reduction == "sum":
@@ -6812,7 +6900,7 @@ def conditional_loss(
         model_pred = model_pred.to(torch.float64)
         target = target.to(torch.float64)
         loss = kornia.losses.geman_mcclure_loss(model_pred, target)
-        loss = loss.add(torch.finfo(torch.float32).tiny)
+        loss = loss.add(eps)
         if reduction == "mean":
             loss = torch.mean(loss)
         elif reduction == "sum":

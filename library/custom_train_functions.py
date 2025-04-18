@@ -137,8 +137,7 @@ def apply_debiased_estimation(loss: torch.Tensor, timesteps: torch.IntTensor, no
     if hasattr(noise_scheduler, "get_snr_for_timestep") and callable(noise_scheduler.get_snr_for_timestep):
         snr_t: torch.Tensor = noise_scheduler.get_snr_for_timestep(timesteps, image_size)
     else:
-        timesteps_indices = train_util.timesteps_to_indices(timesteps, len(noise_scheduler.all_snr))
-        snr_t = torch.stack([noise_scheduler.all_snr[t] for t in timesteps_indices])
+        snr_t = torch.stack([noise_scheduler.all_snr[t] for t in timesteps])
 
     # Cap the SNR to avoid numerical issues
     snr_t = torch.minimum(snr_t, torch.ones_like(snr_t) * 1000)
@@ -211,8 +210,9 @@ def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted
         )
 
     parser.add_argument("--wavelet_loss", action="store_true", help="Activate wavelet loss. Default: False")
-    parser.add_argument("--wavelet_loss_alpha", type=float, default=0.98, help="Wavelet loss alpha. Default: 1.0")
+    parser.add_argument("--wavelet_loss_alpha", type=float, default=0.98, help="Wavelet loss alpha. Default: 0.98")
     parser.add_argument("--wavelet_loss_type", help="Wavelet loss type l1, l2, huber, smooth_l1. Default to --loss_type value.")
+    parser.add_argument("--wavelet_loss_delta", help="For loss types that are adjustable via beta/delta/scale/huber_c etc. Defaults to huber_c.")
     parser.add_argument("--wavelet_loss_transform", default="swt", help="Wavelet transform type of DWT or SWT. Default: swt")
     parser.add_argument("--wavelet_loss_wavelet", default="sym7", help="Wavelet. Default: sym7")
     parser.add_argument("--wavelet_loss_level", type=int, default=1, help="Wavelet loss level 1 (main) or 2 (details). Higher levels are available for DWT for higher resolution training. Default: 1")
@@ -748,8 +748,11 @@ class StationaryWaveletTransform(WaveletTransform):
 class WaveletLoss(nn.Module):
     """Wavelet-based loss calculation module."""
 
-    def __init__(self, wavelet='db4', level=3, transform_type="dwt", 
-                 loss_fn: Optional[LossCallable]=F.mse_loss, device=torch.device("cpu"), 
+    def __init__(self, wavelet='db4', 
+                 level=3, 
+                 transform_type="dwt", 
+                 loss_fn: Optional[LossCallable]=F.mse_loss, 
+                 device=torch.device("cpu"), 
                  band_level_weights: Optional[dict[str, float]]=None, 
                  band_weights: Optional[dict[str, float]]=None, 
                  ll_level_threshold: Optional[int]=-1):
