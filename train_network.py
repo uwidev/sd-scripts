@@ -1356,6 +1356,7 @@ class NetworkTrainer:
             "ss_wavelet_loss_alpha": args.wavelet_loss_alpha,
             "ss_wavelet_loss_type": args.wavelet_loss_type,
             "ss_wavelet_loss_delta": args.wavelet_loss_delta,
+            "ss_wavelet_loss_schedule": args.wavelet_loss_schedule,
             "ss_wavelet_loss_transform": args.wavelet_loss_transform,
             "ss_wavelet_loss_wavelet": args.wavelet_loss_wavelet,
             "ss_wavelet_loss_level": args.wavelet_loss_level,
@@ -1710,6 +1711,9 @@ class NetworkTrainer:
             logger.info(f"\tAlpha: {args.wavelet_loss_alpha}")
             logger.info(f"\tTransform: {args.wavelet_loss_transform}")
             logger.info(f"\tWavelet: {args.wavelet_loss_wavelet}")
+            logger.info(f"\tLoss type: {args.wavelet_loss_type}")
+            logger.info(f"\tLoss schedule: {args.wavelet_loss_schedule}")
+            logger.info(f"\tLoss delta: {args.wavelet_loss_delta}")
             if args.wavelet_loss_ll_level_threshold is not None:
                 logger.info(f"\tLL level threshold: {args.wavelet_loss_ll_level_threshold}")
             if args.wavelet_loss_band_weights is not None:
