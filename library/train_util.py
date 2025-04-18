@@ -6870,11 +6870,11 @@ def conditional_loss(
     elif loss_type == "l1":
         loss = stable_l1_loss(model_pred, target, reduction=reduction, eps=eps)
     elif loss_type == "standard_pseudo_huber":
-        loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c[0].item(), reduction=reduction, eps=eps)
+        loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c, reduction=reduction, eps=eps)
     elif loss_type == "standard_huber":
-        loss = stable_huber_loss(model_pred, target, reduction=reduction, delta=huber_c[0].item(), eps=eps)
+        loss = stable_huber_loss(model_pred, target, reduction=reduction, delta=huber_c, eps=eps)
     elif loss_type == "standard_smooth_l1":
-        loss = stable_smooth_l1_loss(model_pred, target, reduction=reduction, beta=huber_c[0].item(), eps=eps)
+        loss = stable_smooth_l1_loss(model_pred, target, reduction=reduction, beta=huber_c, eps=eps)
     elif loss_type == "huber":
         loss = 2 * huber_c * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
         if reduction == "mean":
