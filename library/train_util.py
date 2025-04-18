@@ -6864,61 +6864,46 @@ def conditional_loss(
     if eps is None or eps <= 0.0:
         eps = torch.finfo(torch.float32).tiny
 
+    model_pred = model_pred.to(torch.float64)
+    target = target.to(torch.float64)
 
     if loss_type == "l2":
-        loss = stable_mse_loss(model_pred, target, reduction=reduction, eps=eps)
+        loss = stable_mse_loss(model_pred, target, reduction="none", eps=eps)
     elif loss_type == "l1":
-        loss = stable_l1_loss(model_pred, target, reduction=reduction, eps=eps)
+        loss = stable_l1_loss(model_pred, target, reduction="none", eps=eps)
     elif loss_type == "standard_pseudo_huber":
-        loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c, reduction=reduction, eps=eps)
+        loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c, reduction="none", eps=eps)
     elif loss_type == "standard_huber":
-        loss = stable_huber_loss(model_pred, target, reduction=reduction, delta=huber_c, eps=eps)
+        loss = stable_huber_loss(model_pred, target, reduction="none", delta=huber_c, eps=eps)
     elif loss_type == "standard_smooth_l1":
-        loss = stable_smooth_l1_loss(model_pred, target, reduction=reduction, beta=huber_c, eps=eps)
+        loss = stable_smooth_l1_loss(model_pred, target, reduction="none", beta=huber_c, eps=eps)
     elif loss_type == "huber":
-        loss = 2 * huber_c * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
-        if reduction == "mean":
-            loss = torch.mean(loss)
-        elif reduction == "sum":
-            loss = torch.sum(loss)
+        loss = 2 * huber_c * (torch.sqrt(((model_pred - target)**2 + eps) + huber_c**2) - huber_c)
     elif loss_type == "smooth_l1":
-        loss = 2 * (torch.sqrt((model_pred - target) ** 2 + huber_c**2) - huber_c)
-        if reduction == "mean":
-            loss = torch.mean(loss)
-        elif reduction == "sum":
-            loss = torch.sum(loss)
+        loss = 2 * (torch.sqrt(((model_pred - target)**2 + eps) + huber_c**2) - huber_c)
     elif loss_type == "x_sigmoid":
-        loss = x_sigmoid_loss(model_pred, target, reduction=reduction)
+        loss = x_sigmoid_loss(model_pred, target, reduction="none").add(eps)
     elif loss_type == "log_cosh":
-        loss = stable_log_cosh_loss(model_pred, target, reduction=reduction)
+        loss = stable_log_cosh_loss(model_pred, target, reduction="none").add(eps)
     elif loss_type == "squared_logarithmic":
-        loss = stable_msle_loss(model_pred, target, reduction=reduction)
+        loss = stable_msle_loss(model_pred, target, reduction="none").add(eps)
     elif loss_type == "soft_welsch":
-        loss = soft_welsch_loss(model_pred, target, reduction=reduction, delta=huber_c, scale=scale)
+        loss = soft_welsch_loss(model_pred, target, reduction="none", delta=huber_c, scale=scale)
     elif loss_type == "scaled_quadratic":
-        loss = scaled_quadratic_loss(model_pred, target, reduction=reduction, delta=huber_c, eps=eps)
+        loss = scaled_quadratic_loss(model_pred, target, reduction="none", delta=huber_c, eps=eps)
     elif loss_type == "standard_deviation_loss":
-        loss = standard_deviation_loss(model_pred, target, reduction=reduction)
+        loss = standard_deviation_loss(model_pred, target, reduction="none", eps=eps)
     elif loss_type == "psnr_loss":
-        model_pred = model_pred.to(torch.float64)
-        target = target.to(torch.float64)
-        loss = kornia.losses.psnr_loss(model_pred, target, 1.0)
-        loss = loss.add(eps)
-        if reduction == "mean":
-            loss = torch.mean(loss)
-        elif reduction == "sum":
-            loss = torch.sum(loss)
+        loss = kornia.losses.psnr_loss(model_pred, target, 1.0).add(eps)
     elif loss_type == "geman_mcclure_loss":
-        model_pred = model_pred.to(torch.float64)
-        target = target.to(torch.float64)
-        loss = kornia.losses.geman_mcclure_loss(model_pred, target)
-        loss = loss.add(eps)
-        if reduction == "mean":
-            loss = torch.mean(loss)
-        elif reduction == "sum":
-            loss = torch.sum(loss)
+        loss = kornia.losses.geman_mcclure_loss(model_pred, target).add(eps)
     else:
         raise NotImplementedError(f"Unsupported Loss Type: {loss_type}")
+    
+    if reduction == "mean":
+        loss = torch.mean(loss)
+    elif reduction == "sum":
+        loss = torch.sum(loss)
     return loss
 
 
