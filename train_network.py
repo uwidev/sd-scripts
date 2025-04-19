@@ -1946,11 +1946,9 @@ class NetworkTrainer:
             if args.min_snr_gamma:
                 logger.warning("Min snr gamma and sangoi loss modification both limit the max snr, ignoring min snr gamma in favor of sangoi.")
 
-        if args.loss_type.lower() != 'frequency_distribution':
-            if weighting is not None:
-                print("Warning: Spatial weighting is not applied for frequency distribution loss.")
-            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-                print("Warning: Masked loss is not applied spatially for frequency distribution loss..")
+        if args.loss_type.lower() == 'frequency_distribution':
+            print("Warning: Spatial weighting is not applied for frequency distribution loss.")
+            print("Warning: Masked loss is not applied spatially for frequency distribution loss..")
 
         if args.full_bf16:
             # apply stochastic grad accumulator hooks
