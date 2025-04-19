@@ -634,6 +634,8 @@ class NetworkTrainer:
                             self.get_models_for_text_encoding(args, accelerator, text_encoders),
                             input_ids_list,
                             weights_list,
+                            dtype=torch.float64 if args.loss_related_use_float64 else None,
+                            device=str(accelerator.device)
                         )
                     else:
                         input_ids = [ids.to(device=accelerator.device) for ids in batch["input_ids_list"]]
@@ -641,6 +643,8 @@ class NetworkTrainer:
                             tokenize_strategy,
                             self.get_models_for_text_encoding(args, accelerator, text_encoders),
                             input_ids,
+                            dtype=torch.float64 if args.loss_related_use_float64 else None,
+                            device=str(accelerator.device)
                         )
                         if args.full_fp16:
                             encoded_text_encoder_conds = [c for c in encoded_text_encoder_conds]
@@ -1942,6 +1946,12 @@ class NetworkTrainer:
             if args.min_snr_gamma:
                 logger.warning("Min snr gamma and sangoi loss modification both limit the max snr, ignoring min snr gamma in favor of sangoi.")
 
+        if args.loss_type.lower() != 'frequency_distribution':
+            if weighting is not None:
+                print("Warning: Spatial weighting is not applied for frequency distribution loss.")
+            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+                print("Warning: Masked loss is not applied spatially for frequency distribution loss..")
+
         if args.full_bf16:
             # apply stochastic grad accumulator hooks
             stochastic_accumulator.StochasticAccumulator.assign_hooks(network)
@@ -2031,6 +2041,8 @@ class NetworkTrainer:
                                         self.get_models_for_text_encoding(args, accelerator, text_encoders),
                                         input_ids_list,
                                         weights_list,
+                                        dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                        device=str(accelerator.device)
                                     )
                                 else:
                                     input_ids = [ids.to(device=accelerator.device) for ids in batch["input_ids_list"]]
@@ -2038,6 +2050,8 @@ class NetworkTrainer:
                                         tokenize_strategy,
                                         self.get_models_for_text_encoding(args, accelerator, text_encoders),
                                         input_ids,
+                                        dtype=torch.float64 if args.loss_related_use_float64 else None, 
+                                        device=str(accelerator.device)
                                     )
                                 if args.full_fp16:
                                     encoded_text_encoder_conds = [c for c in encoded_text_encoder_conds]
@@ -2120,13 +2134,17 @@ class NetworkTrainer:
                                 wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(noise_pred, target)
                                 # Weight the losses as needed
                                 #loss = loss + args.wavelet_loss_alpha * wav_loss
-                                loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
 
-                            if weighting is not None:
-                                loss = loss * weighting
-                            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-                                loss = apply_masked_loss(loss, batch)
-                            loss = loss.mean(dim=[1, 2, 3])  # Mean over dimensions
+                                if args.loss_type.lower() == 'frequency_distribution':
+                                    wav_loss = wav_loss.mean(dim=[1, 2])
+                                loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
+                            
+                            if args.loss_type.lower() != 'frequency_distribution':
+                                if weighting is not None:
+                                    loss = loss * weighting
+                                if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+                                    loss = apply_masked_loss(loss, batch)
+                                loss = loss.mean(dim=[1, 2, 3])
 
                             loss_weights = batch["loss_weights"]  # Sample-wise weights
                             loss = loss * loss_weights
@@ -2624,6 +2642,8 @@ class NetworkTrainer:
                                         self.get_models_for_text_encoding(args, accelerator, text_encoders),
                                         input_ids_list,
                                         weights_list,
+                                        dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                        device=str(accelerator.device)
                                     )
                                 else:
                                     input_ids = [ids.to(device=accelerator.device) for ids in batch["input_ids_list"]]
@@ -2631,6 +2651,8 @@ class NetworkTrainer:
                                         tokenize_strategy,
                                         self.get_models_for_text_encoding(args, accelerator, text_encoders),
                                         input_ids,
+                                        dtype=torch.float64 if args.loss_related_use_float64 else None, 
+                                        device=str(accelerator.device)
                                     )
                                 if args.full_fp16:
                                     encoded_text_encoder_conds = [c for c in encoded_text_encoder_conds]
@@ -2716,13 +2738,17 @@ class NetworkTrainer:
                                 wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(noise_pred, target)
                                 # Weight the losses as needed
                                 #loss = loss + args.wavelet_loss_alpha * wav_loss
-                                loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
 
-                            if weighting is not None:
-                                loss = loss * weighting
-                            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-                                loss = apply_masked_loss(loss, batch)
-                            loss = loss.mean(dim=[1, 2, 3])
+                                if args.loss_type.lower() == 'frequency_distribution':
+                                    wav_loss = wav_loss.mean(dim=[1, 2])
+                                loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
+                            
+                            if args.loss_type.lower() != 'frequency_distribution':
+                                if weighting is not None:
+                                    loss = loss * weighting
+                                if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+                                    loss = apply_masked_loss(loss, batch)
+                                loss = loss.mean(dim=[1, 2, 3])
 
                             loss_weights = batch["loss_weights"]  # 各sampleごとのweight
                             loss = loss * loss_weights

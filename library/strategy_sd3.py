@@ -74,7 +74,7 @@ class Sd3TextEncodingStrategy(TextEncodingStrategy):
         tokens: List[torch.Tensor],
         apply_lg_attn_mask: Optional[bool] = False,
         apply_t5_attn_mask: Optional[bool] = False,
-        enable_dropout: bool = True,
+        enable_dropout: bool = True, dtype = None, device = None,
     ) -> List[torch.Tensor]:
         """
         returned embeddings are not masked
@@ -308,7 +308,7 @@ class Sd3TextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
 
         return True
 
-    def load_outputs_npz(self, npz_path: str) -> List[np.ndarray]:
+    def load_outputs_npz(self, npz_path: str, dtype=None, device=None) -> List[np.ndarray]:
         data = np.load(npz_path)
         lg_out = data["lg_out"]
         lg_pooled = data["lg_pooled"]
@@ -322,7 +322,7 @@ class Sd3TextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
         return [lg_out, t5_out, lg_pooled, l_attn_mask, g_attn_mask, t5_attn_mask]
 
     def cache_batch_outputs(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], text_encoding_strategy: TextEncodingStrategy, infos: List
+        self, tokenize_strategy: TokenizeStrategy, models: List[Any], text_encoding_strategy: TextEncodingStrategy, infos: List, dtype=None, device=None
     ):
         sd3_text_encoding_strategy: Sd3TextEncodingStrategy = text_encoding_strategy
         captions = [info.caption for info in infos]
@@ -336,7 +336,8 @@ class Sd3TextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
                 tokens_and_masks,
                 apply_lg_attn_mask=self.apply_lg_attn_mask,
                 apply_t5_attn_mask=self.apply_t5_attn_mask,
-                enable_dropout=False,
+                enable_dropout=False, 
+                dtype=dtype, device=device
             )
 
         if lg_out.dtype == torch.bfloat16:

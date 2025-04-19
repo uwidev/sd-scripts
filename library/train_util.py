@@ -37,6 +37,8 @@ import matplotlib
 matplotlib.use('Agg')  # Set the backend to 'Agg', non-interactive backend
 import matplotlib.pyplot as plt
 plt.ioff() # Explicitly turn off interactive mode
+from tools.focal_frequency_loss import FocalFrequencyLoss
+from tools.fdl_loss_gemini_refined import FDLossLatent
 
 import kornia
 
@@ -6850,6 +6852,9 @@ def stable_l1_loss(predictions, targets, reduction: str = 'mean', eps=1e-37):
         raise ValueError(f"Unsupported reduction type: {reduction}")
     return loss
 
+fdLossModule = None
+ffLossModule = None
+
 def conditional_loss(
     model_pred: torch.Tensor, 
     target: torch.Tensor, 
@@ -6900,6 +6905,16 @@ def conditional_loss(
         loss = kornia.losses.psnr_loss(model_pred, target, 1.0).add(eps)
     elif loss_type == "geman_mcclure_loss":
         loss = kornia.losses.geman_mcclure_loss(model_pred, target).add(eps)
+    elif loss_type == "frequency_distribution":
+        global fdLossModule
+        if fdLossModule is None:
+            fdLossModule = FDLossLatent()
+        loss = fdLossModule(model_pred, target).add(eps)
+    elif loss_type == "focal_frequency":
+        global ffLossModule
+        if ffLossModule is None:
+            ffLossModule = FocalFrequencyLoss()
+        loss = ffLossModule(model_pred, target).add(eps)
     else:
         raise NotImplementedError(f"Unsupported Loss Type: {loss_type}")
     

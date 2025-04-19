@@ -56,7 +56,7 @@ class SdTextEncodingStrategy(TextEncodingStrategy):
         self.clip_skip = clip_skip
 
     def encode_tokens(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor]
+        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor], dtype = None, device = None,
     ) -> List[torch.Tensor]:
         text_encoder = models[0]
         tokens = tokens[0]
@@ -111,6 +111,8 @@ class SdTextEncodingStrategy(TextEncodingStrategy):
         models: List[Any],
         tokens_list: List[torch.Tensor],
         weights_list: List[torch.Tensor],
+        dtype = None, 
+        device = None,
     ) -> List[torch.Tensor]:
         encoder_hidden_states = self.encode_tokens(tokenize_strategy, models, tokens_list)[0]
 

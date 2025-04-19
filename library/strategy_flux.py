@@ -87,6 +87,7 @@ class FluxTextEncodingStrategy(TextEncodingStrategy):
         models: List[Any],
         tokens: List[torch.Tensor],
         apply_t5_attn_mask: Optional[bool] = None,
+        dtype = None, device = None,
     ) -> List[torch.Tensor]:
         # supports single model inference
 
@@ -170,7 +171,7 @@ class FluxTextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
 
         return True
 
-    def load_outputs_npz(self, npz_path: str) -> List[np.ndarray]:
+    def load_outputs_npz(self, npz_path: str, dtype=None, device=None) -> List[np.ndarray]:
         data = np.load(npz_path)
         l_pooled = data["l_pooled"]
         t5_out = data["t5_out"]
@@ -221,7 +222,7 @@ class FluxTextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
 
 
     def cache_batch_outputs(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], text_encoding_strategy: TextEncodingStrategy, infos: List
+        self, tokenize_strategy: TokenizeStrategy, models: List[Any], text_encoding_strategy: TextEncodingStrategy, infos: List, dtype=None, device=None
     ):
         if not self.warn_fp8_weights:
             if flux_utils.get_t5xxl_actual_dtype(models[1]) == torch.float8_e4m3fn:
@@ -237,7 +238,8 @@ class FluxTextEncoderOutputsCachingStrategy(TextEncoderOutputsCachingStrategy):
         tokens_and_masks = tokenize_strategy.tokenize(captions)
         with torch.no_grad():
             # attn_mask is applied in text_encoding_strategy.encode_tokens if apply_t5_attn_mask is True
-            l_pooled, t5_out, txt_ids, _ = flux_text_encoding_strategy.encode_tokens(tokenize_strategy, models, tokens_and_masks)
+            l_pooled, t5_out, txt_ids, _ = flux_text_encoding_strategy.encode_tokens(tokenize_strategy, models, tokens_and_masks, 
+                                                                                     dtype=dtype, device=device)
 
         if l_pooled.dtype == torch.bfloat16:
             l_pooled = l_pooled.float()

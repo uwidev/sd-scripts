@@ -298,7 +298,7 @@ class TextEncodingStrategy:
         return cls._strategy
 
     def encode_tokens(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor]
+        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor], dtype = None, device = None,
     ) -> List[torch.Tensor]:
         """
         Encode tokens into embeddings and outputs.
@@ -308,7 +308,7 @@ class TextEncodingStrategy:
         raise NotImplementedError
 
     def encode_tokens_with_weights(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor], weights: List[torch.Tensor]
+        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor], weights: List[torch.Tensor], dtype = None, device = None,
     ) -> List[torch.Tensor]:
         """
         Encode tokens into embeddings and outputs.
@@ -365,14 +365,14 @@ class TextEncoderOutputsCachingStrategy:
     def get_outputs_npz_path(self, image_abs_path: str) -> str:
         raise NotImplementedError
 
-    def load_outputs_npz(self, npz_path: str) -> List[np.ndarray]:
+    def load_outputs_npz(self, npz_path: str, dtype=None, device=None) -> List[np.ndarray]:
         raise NotImplementedError
 
     def is_disk_cached_outputs_expected(self, npz_path: str) -> bool:
         raise NotImplementedError
 
     def cache_batch_outputs(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], text_encoding_strategy: TextEncodingStrategy, batch: List
+        self, tokenize_strategy: TokenizeStrategy, models: List[Any], text_encoding_strategy: TextEncodingStrategy, batch: List, dtype=None, device=None
     ):
         raise NotImplementedError
 

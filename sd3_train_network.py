@@ -239,6 +239,8 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
                                     tokens_and_masks,
                                     args.apply_lg_attn_mask,
                                     args.apply_t5_attn_mask,
+                                    dtype=torch.float64 if args.loss_related_use_float64 else None, 
+                                    device=str(accelerator.device)
                                 )
                 self.sample_prompts_te_outputs = sample_prompts_te_outputs
 

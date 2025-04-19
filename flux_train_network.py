@@ -245,7 +245,9 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
                                 logger.info(f"cache Text Encoder outputs for prompt: {p}")
                                 tokens_and_masks = tokenize_strategy.tokenize(p)
                                 sample_prompts_te_outputs[p] = text_encoding_strategy.encode_tokens(
-                                    tokenize_strategy, text_encoders, tokens_and_masks, args.apply_t5_attn_mask
+                                    tokenize_strategy, text_encoders, tokens_and_masks, args.apply_t5_attn_mask,
+                                    dtype=torch.float64 if args.loss_related_use_float64 else None, 
+                                    device=str(accelerator.device)
                                 )
                 self.sample_prompts_te_outputs = sample_prompts_te_outputs
 
