@@ -6867,6 +6867,8 @@ def conditional_loss(
 
     if huber_c is not None and huber_c.numel() > 1:
         huber_c_reshaped = huber_c.view(*huber_c.shape[:1], *([1] * (model_pred.dim() - 1)))
+    else:
+        huber_c_reshaped = huber_c
 
     if loss_type == "l2":
         loss = stable_mse_loss(model_pred, target, reduction="none", eps=eps)
