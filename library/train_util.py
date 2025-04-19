@@ -6867,20 +6867,23 @@ def conditional_loss(
     model_pred = model_pred.to(torch.float64)
     target = target.to(torch.float64)
 
+    if huber_c is not None:
+        huber_c_reshaped = huber_c.view(*huber_c.shape[:1], *([1] * (model_pred.dim() - 1)))
+
     if loss_type == "l2":
         loss = stable_mse_loss(model_pred, target, reduction="none", eps=eps)
     elif loss_type == "l1":
         loss = stable_l1_loss(model_pred, target, reduction="none", eps=eps)
     elif loss_type == "standard_pseudo_huber":
-        loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c, reduction="none", eps=eps)
+        loss = stable_pseudo_huber_loss(model_pred, target, delta=huber_c_reshaped, reduction="none", eps=eps)
     elif loss_type == "standard_huber":
-        loss = stable_huber_loss(model_pred, target, reduction="none", delta=huber_c, eps=eps)
+        loss = stable_huber_loss(model_pred, target, reduction="none", delta=huber_c_reshaped, eps=eps)
     elif loss_type == "standard_smooth_l1":
-        loss = stable_smooth_l1_loss(model_pred, target, reduction="none", beta=huber_c, eps=eps)
+        loss = stable_smooth_l1_loss(model_pred, target, reduction="none", beta=huber_c_reshaped, eps=eps)
     elif loss_type == "huber":
-        loss = 2 * huber_c * (torch.sqrt(((model_pred - target)**2 + eps) + huber_c**2) - huber_c)
+        loss = 2 * huber_c_reshaped * (torch.sqrt(((model_pred - target)**2 + eps) + huber_c_reshaped**2) - huber_c_reshaped)
     elif loss_type == "smooth_l1":
-        loss = 2 * (torch.sqrt(((model_pred - target)**2 + eps) + huber_c**2) - huber_c)
+        loss = 2 * (torch.sqrt(((model_pred - target)**2 + eps) + huber_c_reshaped**2) - huber_c_reshaped)
     elif loss_type == "x_sigmoid":
         loss = x_sigmoid_loss(model_pred, target, reduction="none").add(eps)
     elif loss_type == "log_cosh":
@@ -6888,9 +6891,9 @@ def conditional_loss(
     elif loss_type == "squared_logarithmic":
         loss = stable_msle_loss(model_pred, target, reduction="none").add(eps)
     elif loss_type == "soft_welsch":
-        loss = soft_welsch_loss(model_pred, target, reduction="none", delta=huber_c, scale=scale)
+        loss = soft_welsch_loss(model_pred, target, reduction="none", delta=huber_c_reshaped, scale=scale)
     elif loss_type == "scaled_quadratic":
-        loss = scaled_quadratic_loss(model_pred, target, reduction="none", delta=huber_c, eps=eps)
+        loss = scaled_quadratic_loss(model_pred, target, reduction="none", delta=huber_c_reshaped, eps=eps)
     elif loss_type == "standard_deviation_loss":
         loss = standard_deviation_loss(model_pred, target, reduction="none", eps=eps)
     elif loss_type == "psnr_loss":
