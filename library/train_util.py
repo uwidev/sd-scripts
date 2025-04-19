@@ -6548,9 +6548,8 @@ def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler
     if args.loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
         return None
 
-    b_size = timesteps.shape[0]
     if args.huber_schedule == "constant":
-        result = torch.full((b_size,), args.huber_c * float(args.huber_scale), device=timesteps.device)
+        result = torch.tensor(args.huber_c * float(args.huber_scale), device=timesteps.device)
     elif args.huber_schedule == "exponential":
         alpha = -math.log(args.huber_c) / noise_scheduler.config.num_train_timesteps
         result = torch.exp(-alpha * timesteps) * float(args.huber_scale)
@@ -6570,9 +6569,8 @@ def get_huber_threshold_if_needed_manual(loss_type, huber_c, huber_scale, huber_
     if loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
         return None
 
-    b_size = timesteps.shape[0]
     if huber_schedule == "constant":
-        result = torch.full((b_size,), huber_c * float(huber_scale), device=timesteps.device)
+        result = torch.tensor(huber_c * float(huber_scale), device=timesteps.device)
     elif huber_schedule == "exponential":
         alpha = -math.log(huber_c) / noise_scheduler.config.num_train_timesteps
         result = torch.exp(-alpha * timesteps) * float(huber_scale)
@@ -6867,7 +6865,7 @@ def conditional_loss(
     model_pred = model_pred.to(torch.float64)
     target = target.to(torch.float64)
 
-    if huber_c is not None:
+    if huber_c is not None and huber_c.numel() > 1:
         huber_c_reshaped = huber_c.view(*huber_c.shape[:1], *([1] * (model_pred.dim() - 1)))
 
     if loss_type == "l2":
