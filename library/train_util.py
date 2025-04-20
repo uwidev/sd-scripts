@@ -4861,7 +4861,7 @@ def resume_from_local_or_hf_if_specified(accelerator, args):
     accelerator.load_state(dirname)
 
 
-def get_optimizer(args, trainable_params) -> tuple[str, str, object]:
+def get_optimizer(args, trainable_params, optimizer_kwargs: Dict = {}) -> tuple[str, str, object]:
     # "Optimizer to use: AdamW, AdamW8bit, Lion, SGDNesterov, SGDNesterov8bit, PagedAdamW, PagedAdamW8bit, PagedAdamW32bit, Lion8bit, PagedLion8bit, AdEMAMix8bit, PagedAdEMAMix8bit, DAdaptation(DAdaptAdamPreprint), DAdaptAdaGrad, DAdaptAdam, DAdaptAdan, DAdaptAdanIP, DAdaptLion, DAdaptSGD, Adafactor"
 
     optimizer_type = args.optimizer_type
@@ -4893,8 +4893,7 @@ def get_optimizer(args, trainable_params) -> tuple[str, str, object]:
         ), "fused_backward_pass does not work with gradient_accumulation_steps > 1 / fused_backward_passはgradient_accumulation_steps>1では機能しません"
 
     # 引数を分解する
-    optimizer_kwargs = {}
-    if args.optimizer_args is not None and len(args.optimizer_args) > 0:
+    if not optimizer_kwargs and args.optimizer_args is not None and len(args.optimizer_args) > 0:
         for arg in args.optimizer_args:
             key, value = arg.split("=")
             try:

@@ -1017,6 +1017,36 @@ class NetworkTrainer:
         # 学習に必要なクラスを準備する
         accelerator.print("prepare optimizer, data loader etc.")
 
+        orthograd_targets = [
+            "lora_down.weight",
+            "lora_up.weight",
+            ".w_norm"  # Add normalization weights (gamma)
+        ]
+
+        optimizer_kwargs = {}
+        if args.optimizer_args is not None and len(args.optimizer_args) > 0:
+            for arg in args.optimizer_args:
+                key, value = arg.split("=")
+                try:
+                    value = ast.literal_eval(value)
+                except ValueError:
+                    value = value
+
+                # value = value.split(",")
+                # for i in range(len(value)):
+                #     if value[i].lower() == "true" or value[i].lower() == "false":
+                #         value[i] = value[i].lower() == "true"
+                #     else:
+                #         value[i] = ast.float(value[i])
+                # if len(value) == 1:
+                #     value = value[0]
+                # else:
+                #     value = tuple(value)
+
+                optimizer_kwargs[key] = value
+
+        apply_orthograd = any(optimizer_kwargs.get(key, False) for key in ['use_orthograd', 'orthograd'])
+
         # make backward compatibility for text_encoder_lr
         support_multiple_lrs = hasattr(network, "prepare_optimizer_params_with_multiple_te_lrs")
         if support_multiple_lrs:
@@ -1030,9 +1060,17 @@ class NetworkTrainer:
         
         try:
             if support_multiple_lrs:
-                results = network.prepare_optimizer_params_with_multiple_te_lrs(text_encoder_lr, args.unet_lr, args.learning_rate)
+                results = network.prepare_optimizer_params_with_multiple_te_lrs(text_encoder_lr=text_encoder_lr, 
+                                                                                unet_lr=args.unet_lr, 
+                                                                                learning_rate=args.learning_rate,
+                                                                                apply_orthograd=apply_orthograd,
+                                                                                orthograd_targets=orthograd_targets)
             else:
-                results = network.prepare_optimizer_params(text_encoder_lr, args.unet_lr, args.learning_rate)
+                results = network.prepare_optimizer_params(text_encoder_lr=text_encoder_lr, 
+                                                           unet_lr=args.unet_lr, 
+                                                           learning_rate=args.learning_rate,
+                                                           apply_orthograd=apply_orthograd,
+                                                           orthograd_targets=orthograd_targets)
             if type(results) is tuple:
                 trainable_params = results[0]
                 lr_descriptions = results[1]
@@ -1040,7 +1078,11 @@ class NetworkTrainer:
                 trainable_params = results
                 lr_descriptions = None
         except TypeError as e:
-            trainable_params = network.prepare_optimizer_params(text_encoder_lr, args.unet_lr)
+            trainable_params = network.prepare_optimizer_params(text_encoder_lr=text_encoder_lr, 
+                                                                unet_lr=args.unet_lr, 
+                                                                learning_rate=None,
+                                                                apply_orthograd=apply_orthograd,
+                                                                orthograd_targets=orthograd_targets)
             lr_descriptions = None
 
         # if len(trainable_params) == 0:
@@ -1053,7 +1095,7 @@ class NetworkTrainer:
         #             v = len(v)
         #         accelerator.print(f"trainable_params: {k} = {v}")
 
-        optimizer_name, optimizer_args, optimizer = train_util.get_optimizer(args, trainable_params)
+        optimizer_name, optimizer_args, optimizer = train_util.get_optimizer(args, trainable_params, optimizer_kwargs)
         optimizer_train_fn, optimizer_eval_fn = train_util.get_optimizer_train_eval_fn(optimizer, args)
 
         # prepare dataloader
