@@ -2116,7 +2116,7 @@ class NetworkTrainer:
                             unet,
                             network,
                             weight_dtype,
-                            not args.network_train_text_encoder_only,
+                            train_unet,
                             timestep_sampler=timestep_sampler,
                         )
 
@@ -2720,7 +2720,7 @@ class NetworkTrainer:
                             unet,
                             network,
                             weight_dtype,
-                            not args.network_train_text_encoder_only,
+                            train_unet,
                             timestep_sampler=timestep_sampler,
                         )
 
