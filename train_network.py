@@ -2286,9 +2286,9 @@ class NetworkTrainer:
                         else:
                             unwrapped_network._current_step += 1
 
-                        if hasattr(unwrapped_network, "update_grad_norms"):
+                        if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_grad_norms"):
                             unwrapped_network.update_grad_norms()
-                        if hasattr(unwrapped_network, "update_norms"):
+                        if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_norms"):
                             unwrapped_network.update_norms()
                         if args.gradient_noise_scale and hasattr(network, "accumulate_grad"):
                             network.accumulate_grad()
@@ -2393,7 +2393,7 @@ class NetworkTrainer:
                             mean_grad_norm = None
                             mean_combined_norm = None
                             max_mean_logs = {"Keys Scaled": keys_scaled, "Avg key norm": mean_norm}
-                        elif hasattr(network, "weight_norms"):
+                        elif getattr(network, "ggpo_sigma", None) and hasattr(network, "grad_norms"):
                             unwrapped_network = accelerator.unwrap_model(network)
                             mean_norm = unwrapped_network.weight_norms().mean().item()
                             mean_grad_norm = unwrapped_network.grad_norms().mean().item()
@@ -2848,9 +2848,9 @@ class NetworkTrainer:
                             else:
                                 unwrapped_network._current_step += 1
 
-                            if hasattr(unwrapped_network, "update_grad_norms"):
+                            if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_grad_norms"):
                                 unwrapped_network.update_grad_norms()
-                            if hasattr(unwrapped_network, "update_norms"):
+                            if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_norms"):
                                 unwrapped_network.update_norms()
                             if args.gradient_noise_scale and hasattr(network, "accumulate_grad"):
                                 network.accumulate_grad()
@@ -2969,7 +2969,7 @@ class NetworkTrainer:
                         mean_grad_norm = None
                         mean_combined_norm = None
                         max_mean_logs = {"Keys Scaled": keys_scaled, "Avg key norm": mean_norm}
-                    elif hasattr(network, "weight_norms") and accelerator.sync_gradients:
+                    elif getattr(network, "ggpo_sigma", None) and hasattr(network, "grad_norms") and accelerator.sync_gradients:
                         unwrapped_network = accelerator.unwrap_model(network)
                         weight_norms = unwrapped_network.weight_norms()
                         mean_norm = weight_norms.mean().item()
