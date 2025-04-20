@@ -78,15 +78,11 @@ class AdaptiveLossWeightMLP(nn.Module):
             noise_scheduler: DDPMScheduler,
             logvar_channels: int = 128,
             lambda_weights: torch.Tensor = None, # Optional precomputed lambda(sigma) weights
-            sigma_data: float = 0.5, # Default sigma_data from EDM paper (used if calculating lambda_weights)
-            calculate_lambda: bool = False, # Flag to calculate lambda(sigma) based on Eq 15
             device='cuda',
             dtype=torch.float32,
-            mlp_input_type: str = 'log_sigma',
         ):
         super().__init__()
         self.noise_scheduler = noise_scheduler
-        self.mlp_input_type = mlp_input_type
         self.logvar_channels = logvar_channels
         self.dtype = dtype
         self.device = device
@@ -96,29 +92,14 @@ class AdaptiveLossWeightMLP(nn.Module):
         # Clamp sigma during calculation to avoid issues, but store unclamped for potential use elsewhere
         self.sigmas = ((1.0 - self.alphas_cumprod).sqrt()).to(device=device, dtype=dtype)
         safe_sigmas = self.sigmas.clamp(min=1e-9) # Use clamped for log
-        print(str(self.sigmas.min()))
 
-        if self.mlp_input_type == 'log_sigma':
-            self.register_buffer('precomputed_c_noise', 0.25 * torch.log(safe_sigmas))
-        elif self.mlp_input_type == 'alpha_bar_std':
-            print("Warning: Using standardized alpha_bar as MLP input (not EDM2 spec)")
-            self.a_bar_mean = self.alphas_cumprod.mean()
-            self.a_bar_std = self.alphas_cumprod.std()
-            self.register_buffer('precomputed_c_noise', None)
-        else:
-            raise ValueError(f"Unknown mlp_input_type: {mlp_input_type}")
+        self.register_buffer('precomputed_c_noise', 0.25 * torch.log(safe_sigmas))
 
         self.logvar_fourier = FourierFeatureExtractor(logvar_channels, dtype=dtype)
         self.logvar_linear = NormalizedLinearLayer(logvar_channels, 1, kernel=(), dtype=dtype)
 
         # Handle lambda weights
-        if calculate_lambda:
-             sigma_data_tensor = torch.tensor(sigma_data, device=device, dtype=dtype)
-             # Use safe_sigmas here too if sigma_data is very small
-             lambda_vals = (safe_sigmas**2 + sigma_data_tensor**2) / (safe_sigmas * sigma_data_tensor)**2
-             self.register_buffer('lambda_weights', lambda_vals.clamp(min=1e-6))
-             print(f"Calculated lambda(sigma) weights using sigma_data={sigma_data}")
-        elif lambda_weights is not None:
+        if lambda_weights is not None:
              if lambda_weights.shape[0] != num_timesteps:
                  raise ValueError(f"Provided lambda_weights shape {lambda_weights.shape} does not match num_timesteps {num_timesteps}")
              self.register_buffer('lambda_weights', lambda_weights.to(device=device, dtype=dtype))
@@ -128,18 +109,9 @@ class AdaptiveLossWeightMLP(nn.Module):
              print("Defaulting lambda_weights to ones")
 
     def _forward(self, timesteps: torch.Tensor):
-        timesteps = timesteps.long().clamp(0, len(self.sigmas) - 1)
+        timesteps = timesteps.long()
 
-        if self.mlp_input_type == 'log_sigma' and self.precomputed_c_noise is not None:
-            c_noise = self.precomputed_c_noise[timesteps]
-        elif self.mlp_input_type == 'log_sigma': # Fallback
-             sigma = self.sigmas[timesteps].clamp(min=1e-9) # Use clamped sigma here too
-             c_noise = 0.25 * torch.log(sigma)
-        elif self.mlp_input_type == 'alpha_bar_std':
-             a_bar = self.alphas_cumprod[timesteps]
-             c_noise = a_bar.sub(self.a_bar_mean).div_(self.a_bar_std)
-        else:
-             raise ValueError(f"Unknown mlp_input_type: {self.mlp_input_type}")
+        c_noise = self.precomputed_c_noise[timesteps]
 
         c_noise = c_noise.squeeze()
         if c_noise.ndim == 0:
@@ -163,45 +135,14 @@ class AdaptiveLossWeightMLP(nn.Module):
                 - total_loss (torch.Tensor): Loss scaled and shifted, same shape as input loss.
                 - loss_scaled (torch.Tensor): Loss scaled only (for logging), same shape as input loss.
         """
-        if loss.ndim == 0:
-            raise ValueError("Input loss must have at least a batch dimension.")
+        timesteps = timesteps.long()
 
-        batch_size = loss.shape[0]
-        original_shape = loss.shape
-        loss_dims = loss.ndim
-
-        # Ensure timesteps are correct shape and type
-        if timesteps.shape[0] != batch_size:
-             raise ValueError(f"Timesteps batch size ({timesteps.shape[0]}) must match loss batch size ({batch_size})")
-        timesteps = timesteps.long().clamp(0, len(self.lambda_weights) - 1)
-
-        # Get per-item adaptive weights u(sigma) and lambda(sigma)
-        adaptive_loss_weights = self._forward(timesteps) # Shape: [B]
-        lambda_t = self.lambda_weights[timesteps]       # Shape: [B]
-
-        # --- Reshape weights for broadcasting ---
-        # Target shape for broadcasting: [B, 1, 1, ...] to match loss dims
-        broadcast_shape = [batch_size] + [1] * (loss_dims - 1)
-        u_sigma_b = adaptive_loss_weights.view(broadcast_shape) # u(sigma) broadcastable
-        lambda_sigma_b = lambda_t.view(broadcast_shape)         # lambda(sigma) broadcastable
-
-        # Clamp and calculate exp(u) safely
-        exp_u_b = torch.exp(u_sigma_b.clamp(-30, 30)).clamp(min=1e-9)
-
-        # --- Calculate element-wise losses ---
-        # Scaled loss: loss * (lambda / exp(u))
-        loss_scaled = loss * (lambda_sigma_b / exp_u_b)
-
-        # Total loss: scaled_loss + u
-        total_loss = loss_scaled + u_sigma_b
-
-        # Assert shapes are maintained
-        assert total_loss.shape == original_shape
-        assert loss_scaled.shape == original_shape
+        adaptive_loss_weights = self._forward(timesteps)
+        loss_scaled = loss * (self.lambda_weights[timesteps] / torch.exp(adaptive_loss_weights)) # type: torch.Tensor
+        loss = loss_scaled + adaptive_loss_weights # type: torch.Tensor
 
         # Return the element-wise losses
-        # The caller will typically take .mean() before optimizer.step()
-        return total_loss, loss_scaled.detach() # Detach scaled loss for logging
+        return loss, loss_scaled.detach() # Detach scaled loss for logging
 
     # --- Rest of methods remain the same ---
     def get_trainable_params(self):
@@ -265,17 +206,14 @@ class AdaptiveLossWeightMLP(nn.Module):
 def create_weight_MLP(noise_scheduler: DDPMScheduler,
                       logvar_channels: int = 128,
                       lambda_weights: torch.tensor = None,
-                      sigma_data: float = 0.5,
-                      calculate_lambda: bool = False,
                       optimizer: torch.optim.Optimizer = torch.optim.AdamW,
                       lr: float = 1e-4,
                       optimizer_args: dict = {'weight_decay': 0, 'betas': (0.9,0.99)},
                       dtype=torch.float32,
-                      device='cuda',
-                      mlp_input_type: str = 'log_sigma'):
-    print(f"Creating weight MLP with input type: {mlp_input_type}, calculate_lambda={calculate_lambda}")
+                      device='cuda'):
+    print(f"Creating weight MLP.")
     lossweightMLP = AdaptiveLossWeightMLP(
-        noise_scheduler, logvar_channels, lambda_weights, sigma_data, calculate_lambda, device, dtype, mlp_input_type
+        noise_scheduler, logvar_channels, lambda_weights, device, dtype,
     )
     MLP_optim = optimizer(lossweightMLP.get_trainable_params(), lr=lr, **optimizer_args)
     return lossweightMLP, MLP_optim
