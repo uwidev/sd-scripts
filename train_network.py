@@ -1060,11 +1060,10 @@ class NetworkTrainer:
         
         try:
             if support_multiple_lrs:
+                # only flux and sd3 atm via Kohya's
                 results = network.prepare_optimizer_params_with_multiple_te_lrs(text_encoder_lr=text_encoder_lr, 
                                                                                 unet_lr=args.unet_lr, 
-                                                                                learning_rate=args.learning_rate,
-                                                                                apply_orthograd=apply_orthograd,
-                                                                                orthograd_targets=orthograd_targets)
+                                                                                default_lr=args.learning_rate)
             else:
                 results = network.prepare_optimizer_params(text_encoder_lr=text_encoder_lr, 
                                                            unet_lr=args.unet_lr, 
@@ -1903,7 +1902,11 @@ class NetworkTrainer:
             optimizer_eval_fn()
             self.sample_images(accelerator, args, 0, global_step, accelerator.device, vae, tokenizers, text_encoder, unet)
             if train_util.calculate_val_loss_check(args, global_step, 0, val_dataloader, train_dataloader):
-                current_val_loss, average_val_loss, val_logs = self.calculate_val_loss(global_step, 0, train_dataloader, val_loss_recorder, val_dataloader, cyclic_val_dataloader, network, tokenizers, tokenize_strategy, text_encoders, text_encoding_strategy, unet, vae, noise_scheduler, vae_dtype, weight_dtype, accelerator, args, train_text_encoder)
+                current_val_loss, average_val_loss, val_logs = self.calculate_val_loss(
+                    global_step, 0, train_dataloader, val_loss_recorder, val_dataloader, 
+                    cyclic_val_dataloader, network, tokenizers, tokenize_strategy, 
+                    text_encoders, text_encoding_strategy, unet, vae, noise_scheduler, 
+                    vae_dtype, weight_dtype, accelerator, args, train_text_encoder)
             #Switch network to train mode
             optimizer_train_fn()
             network.train()
@@ -3666,18 +3669,6 @@ def setup_parser() -> argparse.ArgumentParser:
         "--edm2_loss_weighting_use_float64",
         action="store_true",
         help="Uses float64 for edm2 loss weighting."
-    )
-
-    parser.add_argument(
-        "--disable_training_clip_l",
-        action="store_true",
-        help="Disable training clip l (first te), only effective if training TEs."
-    )
-
-    parser.add_argument(
-        "--disable_training_clip_g",
-        action="store_true",
-        help="Disable training clip g (second te), only effective if training TEs."
     )
 
     # Adaptive non-uniform timestep sampling arguments
