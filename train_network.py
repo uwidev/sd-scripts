@@ -12,7 +12,8 @@ from typing import Any, List
 import toml
 from tools.grokfast import Gradfilter_ma, Gradfilter_ema
 import numpy as np
-import tools.edm2_loss_mm as edm2_loss_mm
+#import tools.edm2_loss_mm as edm2_loss_mm
+import tools.edm2_loss_gemini as edm2_loss_mm
 import ast
 import copy
 
@@ -1017,11 +1018,13 @@ class NetworkTrainer:
         # 学習に必要なクラスを準備する
         accelerator.print("prepare optimizer, data loader etc.")
 
-        orthograd_targets = [
-            "lora_down.weight",
-            "lora_up.weight",
-            ".w_norm"  # Add normalization weights (gamma)
-        ]
+        if isinstance(args.orthograd_targets, str):
+            orthograd_targets = ast.literal_eval(args.orthograd_targets)
+        else:
+            orthograd_targets = [
+                "lora_down.weight",
+                "lora_up.weight",
+            ]
 
         optimizer_kwargs = {}
         if args.optimizer_args is not None and len(args.optimizer_args) > 0:
@@ -1031,17 +1034,6 @@ class NetworkTrainer:
                     value = ast.literal_eval(value)
                 except ValueError:
                     value = value
-
-                # value = value.split(",")
-                # for i in range(len(value)):
-                #     if value[i].lower() == "true" or value[i].lower() == "false":
-                #         value[i] = value[i].lower() == "true"
-                #     else:
-                #         value[i] = ast.float(value[i])
-                # if len(value) == 1:
-                #     value = value[0]
-                # else:
-                #     value = tuple(value)
 
                 optimizer_kwargs[key] = value
 
@@ -1083,16 +1075,6 @@ class NetworkTrainer:
                                                                 apply_orthograd=apply_orthograd,
                                                                 orthograd_targets=orthograd_targets)
             lr_descriptions = None
-
-        # if len(trainable_params) == 0:
-        #     accelerator.print("no trainable parameters found / 学習可能なパラメータが見つかりませんでした")
-        # for params in trainable_params:
-        #     for k, v in params.items():
-        #         if type(v) == float:
-        #             pass
-        #         else:
-        #             v = len(v)
-        #         accelerator.print(f"trainable_params: {k} = {v}")
 
         optimizer_name, optimizer_args, optimizer = train_util.get_optimizer(args, trainable_params, optimizer_kwargs)
         optimizer_train_fn, optimizer_eval_fn = train_util.get_optimizer_train_eval_fn(optimizer, args)
@@ -3755,6 +3737,15 @@ def setup_parser() -> argparse.ArgumentParser:
         default=7,
         help="Final frequency for timestep sampler updates (every N steps)"
     )
+
+    parser.add_argument(
+        "--orthograd_targets",
+        type=str,
+        default=r"['lora_down.weight','lora_up.weight']",
+        help="A list of strings to determine which named parameters should subject to orthgrad, based on their name containing the string."
+    )
+
+
 
     # parser.add_argument("--loraplus_lr_ratio", default=None, type=float, help="LoRA+ learning rate ratio")
     # parser.add_argument("--loraplus_unet_lr_ratio", default=None, type=float, help="LoRA+ UNet learning rate ratio")
