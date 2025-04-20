@@ -1988,9 +1988,9 @@ class NetworkTrainer:
             if args.min_snr_gamma:
                 logger.warning("Min snr gamma and sangoi loss modification both limit the max snr, ignoring min snr gamma in favor of sangoi.")
 
-        if args.loss_type.lower() == 'frequency_distribution':
-            print("Warning: Spatial weighting is not applied for frequency distribution loss.")
-            print("Warning: Masked loss is not applied spatially for frequency distribution loss..")
+        if args.loss_type.lower() in ['frequency_distribution', 'focal_frequency']:
+            print("Warning: Spatial weighting is not applied for frequency loss.")
+            print("Warning: Masked loss is not applied spatially for frequency loss.")
 
         if args.full_bf16:
             # apply stochastic grad accumulator hooks
@@ -2175,11 +2175,11 @@ class NetworkTrainer:
                                 # Weight the losses as needed
                                 #loss = loss + args.wavelet_loss_alpha * wav_loss
 
-                                if args.loss_type.lower() == 'frequency_distribution':
+                                if args.loss_type.lower()in ['frequency_distribution', 'focal_frequency']:
                                     wav_loss = wav_loss.mean(dim=[1, 2])
                                 loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
                             
-                            if args.loss_type.lower() != 'frequency_distribution':
+                            if not (args.loss_type.lower() in ['frequency_distribution', 'focal_frequency']):
                                 if weighting is not None:
                                     loss = loss * weighting
                                 if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
@@ -2779,11 +2779,11 @@ class NetworkTrainer:
                                 # Weight the losses as needed
                                 #loss = loss + args.wavelet_loss_alpha * wav_loss
 
-                                if args.loss_type.lower() == 'frequency_distribution':
+                                if args.loss_type.lower() in ['frequency_distribution', 'focal_frequency']:
                                     wav_loss = wav_loss.mean(dim=[1, 2])
                                 loss = (1.0 - args.wavelet_loss_alpha) * loss + args.wavelet_loss_alpha * wav_loss
                             
-                            if args.loss_type.lower() != 'frequency_distribution':
+                            if not (args.loss_type.lower() in ['frequency_distribution', 'focal_frequency']):
                                 if weighting is not None:
                                     loss = loss * weighting
                                 if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):

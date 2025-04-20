@@ -38,7 +38,7 @@ matplotlib.use('Agg')  # Set the backend to 'Agg', non-interactive backend
 import matplotlib.pyplot as plt
 plt.ioff() # Explicitly turn off interactive mode
 from tools.focal_frequency_loss import FocalFrequencyLoss
-from tools.fdl_loss_gemini_refined import FDLossLatent
+from tools.fdl_loss_gemini_refined import FDLossLatent, ChannelMixerExtractor, ShallowConvExtractor, MultiScaleConvExtractor
 
 import kornia
 

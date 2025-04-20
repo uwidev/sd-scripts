@@ -19,8 +19,8 @@ class FDLossLatent(nn.Module):
     This module works on arbitrary BxCxHxW inputs.
     """
     def __init__(self,
-                 lambda_phase: float = 1.0,
-                 num_projections: int = 64,
+                 lambda_phase: float = 0.1,
+                 num_projections: int = 256,
                  feature_extractor: nn.Module = None):
         """
         Args:
@@ -94,12 +94,12 @@ class ChannelMixerExtractor(nn.Module):
     Learns a linear combination of input channels using 1x1 Convolutions.
     Outputs the same number of channels as the input (4).
     """
-    def __init__(self, in_channels=4, mid_channels=16):
+    def __init__(self, in_channels=4, mid_channels=16, dtype=torch.float32, device="cpu"):
         super().__init__()
         self.mixer = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(in_channels, mid_channels, kernel_size=1, stride=1, padding=0, dtype=dtype, device=device),
             nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, in_channels, kernel_size=1, stride=1, padding=0)
+            nn.Conv2d(mid_channels, in_channels, kernel_size=1, stride=1, padding=0, dtype=dtype, device=device)
             # You could add another ReLU here if desired
         )
 
@@ -115,13 +115,13 @@ class ShallowConvExtractor(nn.Module):
     Applies a few convolutional layers to extract local spatial features.
     Maintains spatial dimensions.
     """
-    def __init__(self, in_channels=4, num_features=16, num_layers=2):
+    def __init__(self, in_channels=4, num_features=16, num_layers=2, dtype=torch.float32, device="cpu"):
         super().__init__()
         layers = []
         current_channels = in_channels
         for i in range(num_layers):
             layers.append(
-                nn.Conv2d(current_channels, num_features, kernel_size=3, stride=1, padding=1)
+                nn.Conv2d(current_channels, num_features, kernel_size=3, stride=1, padding=1, dtype=dtype, device=device)
             )
             layers.append(nn.ReLU(inplace=True))
             current_channels = num_features
@@ -144,11 +144,11 @@ class MultiScaleConvExtractor(nn.Module):
     Uses parallel convolutions with different kernel sizes to capture multi-scale features.
     Concatenates the outputs. Maintains spatial dimensions.
     """
-    def __init__(self, in_channels=4, features_per_scale=8):
+    def __init__(self, in_channels=4, features_per_scale=8, dtype=torch.float32, device="cpu"):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, features_per_scale, kernel_size=1, stride=1, padding=0)
-        self.conv3 = nn.Conv2d(in_channels, features_per_scale, kernel_size=3, stride=1, padding=1)
-        self.conv5 = nn.Conv2d(in_channels, features_per_scale, kernel_size=5, stride=1, padding=2)
+        self.conv1 = nn.Conv2d(in_channels, features_per_scale, kernel_size=1, stride=1, padding=0, dtype=dtype, device=device)
+        self.conv3 = nn.Conv2d(in_channels, features_per_scale, kernel_size=3, stride=1, padding=1, dtype=dtype, device=device)
+        self.conv5 = nn.Conv2d(in_channels, features_per_scale, kernel_size=5, stride=1, padding=2, dtype=dtype, device=device)
         self.relu = nn.ReLU(inplace=True)
         self.output_channels = features_per_scale * 3
 
