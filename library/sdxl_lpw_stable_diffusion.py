@@ -841,14 +841,18 @@ class SdxlStableDiffusionLongPromptWeightingPipeline:
 
         text_input_ids, text_weights = tokenize_strategy.tokenize_with_weights(prompt)
         hidden_states_1, hidden_states_2, text_pool = encoding_strategy.encode_tokens_with_weights(
-            tokenize_strategy, self.text_encoders, text_input_ids, text_weights
+            tokenize_strategy, self.text_encoders, text_input_ids, text_weights,
+            dtype=None,
+            device=str(device)
         )
         text_embeddings = torch.cat([hidden_states_1, hidden_states_2], dim=-1)
 
         if do_classifier_free_guidance:
             input_ids, weights = tokenize_strategy.tokenize_with_weights(negative_prompt or "")
             hidden_states_1, hidden_states_2, uncond_pool = encoding_strategy.encode_tokens_with_weights(
-                tokenize_strategy, self.text_encoders, input_ids, weights
+                tokenize_strategy, self.text_encoders, input_ids, weights,
+                dtype=None,
+                device=str(device)
             )
             uncond_embeddings = torch.cat([hidden_states_1, hidden_states_2], dim=-1)
         else:

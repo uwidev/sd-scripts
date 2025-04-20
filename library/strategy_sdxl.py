@@ -211,7 +211,7 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
         device = None,
     ) -> List[torch.Tensor]:
         with torch.autocast(enabled=dtype is not None, dtype=dtype, device_type=device):
-            hidden_states1, hidden_states2, pool2 = self.encode_tokens(tokenize_strategy, models, tokens_list)
+            hidden_states1, hidden_states2, pool2 = self.encode_tokens(tokenize_strategy, models, tokens_list, dtype = dtype, device = device)
 
             weights_list = [weights.to(hidden_states1.device) for weights in weights_list]
 

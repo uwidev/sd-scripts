@@ -114,7 +114,7 @@ class SdTextEncodingStrategy(TextEncodingStrategy):
         dtype = None, 
         device = None,
     ) -> List[torch.Tensor]:
-        encoder_hidden_states = self.encode_tokens(tokenize_strategy, models, tokens_list)[0]
+        encoder_hidden_states = self.encode_tokens(tokenize_strategy, models, tokens_list, dtype=dtype, device=device)[0]
 
         weights = weights_list[0].to(encoder_hidden_states.device)
 

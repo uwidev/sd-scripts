@@ -1019,6 +1019,8 @@ def train(args):
                                         [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
                                         input_ids_list,
                                         weights_list,
+                                        dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                        device=str(accelerator.device)
                                     )
                                 )
                             else:
@@ -1028,6 +1030,8 @@ def train(args):
                                     tokenize_strategy,
                                     [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
                                     [input_ids1, input_ids2],
+                                    dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                    device=str(accelerator.device)
                                 )
                             if args.full_fp16:
                                 encoder_hidden_states1 = encoder_hidden_states1.to(weight_dtype)
@@ -1343,6 +1347,8 @@ def train(args):
                                         [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
                                         input_ids_list,
                                         weights_list,
+                                        dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                        device=str(accelerator.device)
                                     )
                                 )
                             else:
@@ -1352,6 +1358,8 @@ def train(args):
                                     tokenize_strategy,
                                     [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
                                     [input_ids1, input_ids2],
+                                    dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                    device=str(accelerator.device)
                                 )
                             if args.full_fp16:
                                 encoder_hidden_states1 = encoder_hidden_states1.to(weight_dtype)
