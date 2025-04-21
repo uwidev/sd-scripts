@@ -12,8 +12,7 @@ from typing import Any, List
 import toml
 from tools.grokfast import Gradfilter_ma, Gradfilter_ema
 import numpy as np
-#import tools.edm2_loss_mm as edm2_loss_mm
-import tools.edm2_loss_gemini as edm2_loss_mm
+import tools.edm2_loss as edm2_loss
 import ast
 import copy
 
@@ -1626,7 +1625,7 @@ class NetworkTrainer:
             opti_args = ast.literal_eval(args.edm2_loss_weighting_optimizer_args)
             opti_lr = float(args.edm2_loss_weighting_optimizer_lr) if args.edm2_loss_weighting_optimizer_lr else 2e-2
 
-            lossweightMLP, MLP_optim = edm2_loss_mm.create_weight_MLP(noise_scheduler,
+            lossweightMLP, MLP_optim = edm2_loss.create_weight_MLP(noise_scheduler,
                                                                       logvar_channels=int(args.edm2_loss_weighting_num_channels) if args.edm2_loss_weighting_num_channels else 128,
                                                                       optimizer=getattr(optimizer_module, case_sensitive_optimizer_type),
                                                                       lr=opti_lr,
