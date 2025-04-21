@@ -3567,7 +3567,7 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--edm2_loss_weighting_num_channels",
         type=int,
-        default=128,
+        default=448,
         help="The number of channels used by for the loss weighting module. Additional channels allows for greater granularity in the weighting.",
     )
 
