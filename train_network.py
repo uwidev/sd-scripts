@@ -1631,7 +1631,7 @@ class NetworkTrainer:
                                                                       lr=opti_lr,
                                                                       optimizer_args=opti_args,
                                                                       device=accelerator.device,
-                                                                      dtype=torch.float64 if args.edm2_loss_weighting_use_float64 else torch.float32)
+                                                                      dtype=torch.float64 if args.edm2_loss_weighting_use_float64 or args.loss_related_use_float64 else torch.float32)
             if args.edm2_loss_weighting_initial_weights:
                 lossweightMLP.load_weights(args.edm2_loss_weighting_initial_weights)
 
