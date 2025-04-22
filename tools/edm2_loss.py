@@ -26,7 +26,7 @@ class FourierFeatureExtractor(torch.nn.Module):
         return y.to(x.dtype)
 
 class NormalizedLinearLayer(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, kernel, dtype=torch.float32):
+    def __init__(self, in_channels, out_channels, kernel=(), dtype=torch.float32):
         super().__init__()
         self.out_channels = out_channels
         self.weight = torch.nn.Parameter(torch.randn(out_channels, in_channels, *kernel))
@@ -57,13 +57,13 @@ class AdaptiveLossWeightMLP(nn.Module):
         super().__init__()
         self.alphas_cumprod = noise_scheduler.alphas_cumprod.to(device=device, dtype=dtype)
         self.sigmas = ((1.0 - self.alphas_cumprod).sqrt()).to(device=device, dtype=dtype)
-        safe_sigmas = self.sigmas.clamp(min=1e-19) # Use clamped for log
+        safe_sigmas = self.sigmas.clamp(min=1e-8) # Use clamped for log
 
         self.register_buffer('precomputed_c_noise', 0.25 * torch.log(safe_sigmas))
 
         self.logvar_fourier = FourierFeatureExtractor(logvar_channels, dtype=dtype)
-        self.logvar_linear = NormalizedLinearLayer(logvar_channels, 1, kernel=[], dtype=dtype) # kernel = []? (not in code given, added matching edm2)
-        self.lambda_weights = lambda_weights.to(device=device, dtype=dtype) if lambda_weights is not None else torch.ones(1000, device=device)
+        self.logvar_linear = NormalizedLinearLayer(logvar_channels, 1, kernel=(), dtype=dtype)
+        self.lambda_weights = lambda_weights.to(device=device, dtype=dtype) if lambda_weights is not None else torch.ones(noise_scheduler.config.num_train_timesteps, device=device)
         self.noise_scheduler = noise_scheduler
         self.dtype=dtype
 
