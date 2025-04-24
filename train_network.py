@@ -1727,7 +1727,8 @@ class NetworkTrainer:
                 band_level_weights=args.wavelet_loss_band_level_weights, 
                 band_weights=args.wavelet_loss_band_weights, 
                 ll_level_threshold=int(args.wavelet_loss_ll_level_threshold) if args.wavelet_loss_ll_level_threshold is not None else None, 
-                device=accelerator.device
+                device=accelerator.device,
+                dtype=torch.float64 if args.loss_related_use_float64 else torch.float32
             )
 
             loss_wav_recorder = train_util.LossRecorder()

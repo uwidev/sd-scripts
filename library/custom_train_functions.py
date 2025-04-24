@@ -162,11 +162,11 @@ def parse_wavelet_weights(weights_str):
         try:
             return ast.literal_eval(weights_str)
         except (ValueError, SyntaxError) as e1:
-            print(e1)
+            logger.warning(e1)
             try:
                 return json.loads(weights_str.replace("'", '"'))
             except json.JSONDecodeError as e2:
-                print(e2)
+                logger.warning(e2)
                 pass
 
     # Parse format like "ll1=0.1,lh1=0.01,hl1=0.01,hh1=0.05"
@@ -610,14 +610,16 @@ LossCallable = LossCallableReduction | LossCallableMSE
 class WaveletTransform:
     """Base class for wavelet transforms."""
 
-    def __init__(self, wavelet='db4', device=torch.device("cpu")):
+    def __init__(self, wavelet='db4', device=torch.device("cpu"), dtype=torch.float32):
         """Initialize wavelet filters."""
         assert pywt.Wavelet is not None, "PyWavelets module not available. Please install `pip install PyWavelets`"
 
         # Create filters from wavelet
         wav = pywt.Wavelet(wavelet)
-        self.dec_lo = torch.tensor(wav.dec_lo).to(device)
-        self.dec_hi = torch.tensor(wav.dec_hi).to(device)
+        self.dec_lo = torch.tensor(wav.dec_lo).to(device=device, dtype=dtype)
+        self.dec_hi = torch.tensor(wav.dec_hi).to(device=device, dtype=dtype)
+        self.device = device
+        self.dtype = dtype
 
     def decompose(self, x: Tensor) -> dict[str, list[Tensor]]:
         """Abstract method to be implemented by subclasses."""
@@ -677,10 +679,10 @@ class DiscreteWaveletTransform(WaveletTransform):
         hh = F.conv2d(hi, self.dec_hi.view(1,1,1,-1), stride=(1,2))
 
         # Reshape back to batch format
-        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(x.device)
-        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(x.device)
-        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(x.device)
-        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(x.device)
+        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(device=self.device, dtype=self.dtype)
+        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(device=self.device, dtype=self.dtype)
+        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(device=self.device, dtype=self.dtype)
+        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(device=self.device, dtype=self.dtype)
 
         return ll, lh, hl, hh
 
@@ -740,10 +742,10 @@ class StationaryWaveletTransform(WaveletTransform):
         hh = F.conv2d(x_hi, self.dec_hi.view(1,1,1,-1).repeat(x.size(1),1,1,1), groups=x.size(1))
 
         # Reshape back to batch format
-        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(x.device)
-        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(x.device)
-        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(x.device)
-        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(x.device)
+        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(device=self.device, dtype=self.dtype)
+        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(device=self.device, dtype=self.dtype)
+        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(device=self.device, dtype=self.dtype)
+        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(device=self.device, dtype=self.dtype)
 
         return ll, lh, hl, hh
 
@@ -751,14 +753,16 @@ class StationaryWaveletTransform(WaveletTransform):
 class WaveletLoss(nn.Module):
     """Wavelet-based loss calculation module."""
 
-    def __init__(self, wavelet='db4', 
+    def __init__(self, 
+                 wavelet='db4', 
                  level=3, 
                  transform_type="dwt", 
                  loss_fn: Optional[LossCallable]=F.mse_loss, 
                  device=torch.device("cpu"), 
                  band_level_weights: Optional[dict[str, float]]=None, 
                  band_weights: Optional[dict[str, float]]=None, 
-                 ll_level_threshold: Optional[int]=-1):
+                 ll_level_threshold: Optional[int]=-1,
+                 dtype=torch.float32):
         """
         Initialize wavelet loss module.
         
@@ -777,17 +781,18 @@ class WaveletLoss(nn.Module):
         self.transform_type = transform_type
         self.loss_fn = loss_fn
         self.device = device
+        self.dtype = dtype
         self.ll_level_threshold = ll_level_threshold if ll_level_threshold is not None else None
 
         # Initialize transform based on type
         if transform_type == 'dwt':
-            self.transform = DiscreteWaveletTransform(wavelet, device)
+            self.transform = DiscreteWaveletTransform(wavelet, device=self.device, dtype=self.dtype)
         else:  # swt
-            self.transform = StationaryWaveletTransform(wavelet, device)
+            self.transform = StationaryWaveletTransform(wavelet, device=self.device, dtype=self.dtype)
 
         # Register wavelet filters as module buffers
-        self.register_buffer('dec_lo', self.transform.dec_lo.to(device))
-        self.register_buffer('dec_hi', self.transform.dec_hi.to(device))
+        self.register_buffer('dec_lo', self.transform.dec_lo.to(device=self.device, dtype=self.dtype))
+        self.register_buffer('dec_hi', self.transform.dec_hi.to(device=self.device, dtype=self.dtype))
 
         # Default weights from paper:
         # "Training Generative Image Super-Resolution Models by Wavelet-Domain Losses"
@@ -805,7 +810,7 @@ class WaveletLoss(nn.Module):
         target_coeffs = self.transform.decompose(target, self.level)
 
         # Calculate weighted loss
-        loss = torch.tensor(0.0, device=pred.device)
+        loss = torch.tensor(0.0, device=pred.device, dtype=self.dtype)
         combined_hf_pred = []
         combined_hf_target = []
 
