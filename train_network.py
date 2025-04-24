@@ -1720,6 +1720,12 @@ class NetworkTrainer:
         if args.wavelet_loss:
             args.wavelet_loss_alpha = float(args.wavelet_loss_alpha)
 
+            if args.wavelet_loss_band_level_weights:
+                args.wavelet_loss_band_level_weights = ast.literal_eval(args.wavelet_loss_band_level_weights)
+
+            if args.wavelet_loss_band_weights:
+                args.wavelet_loss_band_weights = ast.literal_eval(args.wavelet_loss_band_weights)
+
 
             self.wavelet_loss = WaveletLoss(
                 wavelet=args.wavelet_loss_wavelet, 
