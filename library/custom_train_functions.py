@@ -679,10 +679,10 @@ class DiscreteWaveletTransform(WaveletTransform):
         hh = F.conv2d(hi, self.dec_hi.view(1,1,1,-1), stride=(1,2))
 
         # Reshape back to batch format
-        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(device=self.device, dtype=self.dtype)
-        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(device=self.device, dtype=self.dtype)
-        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(device=self.device, dtype=self.dtype)
-        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(device=self.device, dtype=self.dtype)
+        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(device=x.device, dtype=self.dtype)
+        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(device=x.device, dtype=self.dtype)
+        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(device=x.device, dtype=self.dtype)
+        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(device=x.device, dtype=self.dtype)
 
         return ll, lh, hl, hh
 
@@ -742,10 +742,10 @@ class StationaryWaveletTransform(WaveletTransform):
         hh = F.conv2d(x_hi, self.dec_hi.view(1,1,1,-1).repeat(x.size(1),1,1,1), groups=x.size(1))
 
         # Reshape back to batch format
-        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(device=self.device, dtype=self.dtype)
-        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(device=self.device, dtype=self.dtype)
-        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(device=self.device, dtype=self.dtype)
-        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(device=self.device, dtype=self.dtype)
+        ll = ll.view(batch, channels, ll.shape[2], ll.shape[3]).to(device=x.device, dtype=self.dtype)
+        lh = lh.view(batch, channels, lh.shape[2], lh.shape[3]).to(device=x.device, dtype=self.dtype)
+        hl = hl.view(batch, channels, hl.shape[2], hl.shape[3]).to(device=x.device, dtype=self.dtype)
+        hh = hh.view(batch, channels, hh.shape[2], hh.shape[3]).to(device=x.device, dtype=self.dtype)
 
         return ll, lh, hl, hh
 
