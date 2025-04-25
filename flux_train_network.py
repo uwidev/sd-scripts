@@ -350,7 +350,8 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
         weight_dtype,
         train_unet,
         fixed_timesteps=None,
-        train=True
+        train=True,
+        timestep_sampler=None,
     ):       
         if args.loss_related_use_float64:
             # Convert to float64, noise and noisy latents will be float64 due to using like on latents
