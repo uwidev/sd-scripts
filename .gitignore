@@ -182,3 +182,5 @@ wd14_tagger_model
 .vscode
 wandb/
 .aiexclude
+config.json
+*.code-workspace
