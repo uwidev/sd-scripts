@@ -1070,7 +1070,7 @@ class NetworkTrainer:
         except TypeError as e:
             trainable_params = network.prepare_optimizer_params(text_encoder_lr=text_encoder_lr, 
                                                                 unet_lr=args.unet_lr, 
-                                                                learning_rate=None,
+                                                                learning_rate=args.learning_rate,
                                                                 apply_orthograd=apply_orthograd,
                                                                 orthograd_targets=orthograd_targets)
             lr_descriptions = None
