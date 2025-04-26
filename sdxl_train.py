@@ -708,6 +708,21 @@ def train(args):
         text_encoder1.text_model.encoder.layers[-1].requires_grad_(False)
         text_encoder1.text_model.final_layer_norm.requires_grad_(False)
 
+    if args.fused_backward_pass:
+        if isinstance(optimizer, transformers.optimization.Adafactor):
+            # use fused optimizer for backward pass: other optimizers will be supported in the future
+            import library.adafactor_fused
+
+            library.adafactor_fused.patch_adafactor_fused(optimizer)
+
+        assert (
+            hasattr(optimizer, "step_param") and callable(optimizer.step_param)
+        ), "fused_backward_pass currently only works with optimizers that have a step_param function defined."
+
+        fused_optimizer_step = optimizer.step
+        fused_optimizer_step_param = optimizer.step_param
+
+
     if args.deepspeed:
         ds_model = deepspeed_utils.prepare_deepspeed_model(
             args,
@@ -764,15 +779,8 @@ def train(args):
     manual_grad_sync: bool = args.full_bf16 and args.stochastic_accumulation
 
     if args.fused_backward_pass:
-        if isinstance(optimizer, transformers.optimization.Adafactor):
-            # use fused optimizer for backward pass: other optimizers will be supported in the future
-            import library.adafactor_fused
-
-            library.adafactor_fused.patch_adafactor_fused(optimizer)
-
-        assert (
-            hasattr(optimizer, "step_param") and callable(optimizer.step_param)
-        ), "fused_backward_pass currently only works with optimizers that have a step_param function defined."
+        optimizer.step = fused_optimizer_step
+        optimizer.step_param = fused_optimizer_step_param
 
         for param_group in optimizer.param_groups:
             for parameter in param_group["params"]:
