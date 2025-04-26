@@ -1040,7 +1040,7 @@ class NetworkTrainer:
 
         # make backward compatibility for text_encoder_lr
         support_multiple_lrs = hasattr(network, "prepare_optimizer_params_with_multiple_te_lrs")
-        if support_multiple_lrs:
+        if support_multiple_lrs or args.network_module == "lycoris.kohya":
             text_encoder_lr = args.text_encoder_lr
         else:
             # toml backward compatibility
