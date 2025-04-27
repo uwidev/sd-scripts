@@ -361,14 +361,14 @@ def train(args):
                         input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
                         encoder_hidden_states = text_encoding_strategy.encode_tokens_with_weights(
                             tokenize_strategy, [text_encoder], input_ids_list, weights_list,
-                            dtype=torch.float64 if args.loss_related_use_float64 else None,
+                            dtype=torch.float64 if args.loss_related_use_float64 else torch.float32,
                             device=str(accelerator.device)
                         )[0]
                     else:
                         input_ids = batch["input_ids_list"][0].to(accelerator.device)
                         encoder_hidden_states = text_encoding_strategy.encode_tokens(
                             tokenize_strategy, [text_encoder], [input_ids],
-                            dtype=torch.float64 if args.loss_related_use_float64 else None,
+                            dtype=torch.float64 if args.loss_related_use_float64 else torch.float32,
                             device=str(accelerator.device)
                         )[0]
                     if args.full_fp16:

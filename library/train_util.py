@@ -1347,7 +1347,7 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info("caching Text Encoder outputs...")
         for batch in tqdm(batches, smoothing=1, total=len(batches)):
             # cache_batch_latents(vae, cache_to_disk, batch, subset.flip_aug, subset.alpha_mask, subset.random_crop)
-            caching_strategy.cache_batch_outputs(tokenize_strategy, models, text_encoding_strategy, batch)
+            caching_strategy.cache_batch_outputs(tokenize_strategy, models, text_encoding_strategy, batch, dtype=None, device=accelerator.device)
 
     # if weight_dtype is specified, Text Encoder itself and output will be converted to the dtype
     # this method is only for SDXL, but it should be implemented here because it needs to be a method of dataset

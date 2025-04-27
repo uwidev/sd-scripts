@@ -82,7 +82,7 @@ def to_stochastic(source: torch.Tensor, dtype = None):
     if dtype is None:
         raise ValueError("Target dtype must be specified for to_stochastic")
 
-    if source.dtype == dtype:
+    if source is None or source.dtype == dtype:
         return source # No operation needed, gradients preserved
 
     # Use the custom autograd function's apply method

@@ -13,6 +13,7 @@ import tools.edm2_loss as edm2_loss
 import ast
 import contextlib
 import transformers
+from tools.stochastic_copy import to_stochastic
 
 from tqdm import tqdm
 
@@ -117,10 +118,12 @@ def determine_grad_sync_context(accelerator, sync_gradients, training_models, lo
 def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, text_encoding_strategy, 
                       unet, vae, noise_scheduler, vae_dtype, weight_dtype, accelerator, args, 
                       timesteps_list: list = [10, 350, 500, 650, 990]):
+    
+    dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
     total_loss = 0.0  
     with torch.autograd.grad_mode.inference_mode(mode=True):
         if "latents" in batch and batch["latents"] is not None:
-            latents = batch["latents"].to(accelerator.device).to(dtype=weight_dtype)
+            latents = batch["latents"].to(accelerator.device)
         else:
             if args.cache_latents:
                 clean_memory_on_device(accelerator.device)
@@ -129,7 +132,8 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
                 vae.eval()
 
             # latentに変換
-            latents = vae.encode(batch["images"].to(device=vae.device, dtype=vae_dtype)).latent_dist.sample().to(dtype=weight_dtype)
+            latents = vae.encode(batch["images"].to(device=vae.device, dtype=vae_dtype)).latent_dist.sample()
+            latents = latents.to(dtype=dtype_to_use)
 
             # NaNが含まれていれば警告を表示し0に置き換える
             if torch.any(torch.isnan(latents)):
@@ -143,55 +147,55 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
                 vae.to("cpu")
                 clean_memory_on_device(accelerator.device)
 
-        latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
+        
+        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+            latents = latents.to(dtype=dtype_to_use)
+            latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
 
-        if args.loss_related_use_float64:
-            # Convert to float64, noise and noisy latents will be float64 due to using like on latents
-            latents = latents.to(torch.float64)
-
-        text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
-        if text_encoder_outputs_list is not None:
-            # Text Encoder outputs are cached
-            encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoder_outputs_list
-            encoder_hidden_states1 = encoder_hidden_states1.to(accelerator.device, dtype=weight_dtype)
-            encoder_hidden_states2 = encoder_hidden_states2.to(accelerator.device, dtype=weight_dtype)
-            pool2 = pool2.to(accelerator.device, dtype=weight_dtype)
-        else:
-            input_ids1, input_ids2 = batch["input_ids_list"]
-            with accelerator.autocast():
+            text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
+            if text_encoder_outputs_list is not None:
+                # Text Encoder outputs are cached
+                encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoder_outputs_list
+                encoder_hidden_states1 = encoder_hidden_states1.to(device=accelerator.device, dtype=dtype_to_use)
+                encoder_hidden_states2 = encoder_hidden_states2.to(device=accelerator.device, dtype=dtype_to_use)
+                pool2 = pool2.to(device=accelerator.device, dtype=dtype_to_use)
+            else:
+                input_ids1, input_ids2 = batch["input_ids_list"]
                 input_ids1 = input_ids1.to(accelerator.device)
                 input_ids2 = input_ids2.to(accelerator.device)
                 encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoding_strategy.encode_tokens(
                     tokenize_strategy, [text_encoder1, text_encoder2], [input_ids1, input_ids2]
                 )
                 if args.full_fp16:
-                    encoder_hidden_states1 = encoder_hidden_states1.to(weight_dtype)
-                    encoder_hidden_states2 = encoder_hidden_states2.to(weight_dtype)
-                    pool2 = pool2.to(weight_dtype)
+                    encoder_hidden_states1 = encoder_hidden_states1.to(dtype_to_use)
+                    encoder_hidden_states2 = encoder_hidden_states2.to(dtype_to_use)
+                    pool2 = pool2.to(dtype_to_use)
 
-            # get size embeddings
-            orig_size = batch["original_sizes_hw"]
-            crop_size = batch["crop_top_lefts"]
-            target_size = batch["target_sizes_hw"]
-            embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device).to(weight_dtype)
+                # get size embeddings
+                orig_size = batch["original_sizes_hw"]
+                crop_size = batch["crop_top_lefts"]
+                target_size = batch["target_sizes_hw"]
+                embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device, 
+                                                        dtype=dtype_to_use)
 
-            # concat embeddings
-            vector_embedding = torch.cat([pool2, embs], dim=1).to(weight_dtype)
-            text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2).to(weight_dtype)
+                # concat embeddings
+                vector_embedding = torch.cat([pool2, embs], dim=1)
+                text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2)
 
-            # Sample noise
-            batch_size = latents.shape[0]
-            for fixed_timesteps in timesteps_list:
-                with accelerator.autocast(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                # Sample noise
+                batch_size = latents.shape[0]
+                for fixed_timesteps in timesteps_list:
                     timesteps = torch.full((batch_size,), fixed_timesteps, dtype=torch.long, device=latents.device)
                     
                     noise, noisy_latents, timesteps, huber_c = train_util.get_noise_noisy_latents_and_timesteps(
                         args, noise_scheduler, latents, timesteps, False
                     )
 
-                    noisy_latents = noisy_latents.to(weight_dtype)  # TODO check why noisy_latents is not weight_dtype
-
-                    noise_pred = unet(noisy_latents, timesteps, text_embedding, vector_embedding)
+                    # Predict the noise residual
+                    noise_pred = unet(to_stochastic(noisy_latents, dtype=weight_dtype), 
+                                        timesteps, 
+                                        to_stochastic(text_embedding, dtype=weight_dtype), 
+                                        to_stochastic(vector_embedding, dtype=weight_dtype))
 
                     if args.loss_related_use_float64:
                         noise_pred = noise_pred.to(torch.float64)
@@ -215,8 +219,8 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
                         noise_pred, target, reduction="mean", loss_type="l2", huber_c=huber_c
                     )
                     total_loss += loss
+                average_loss = total_loss / len(timesteps_list)    
 
-    average_loss = total_loss / len(timesteps_list)    
     return average_loss
 
 def calculate_val_loss(self, 
@@ -542,7 +546,7 @@ def train(args):
 
             text_encoder1.to(accelerator.device)
             text_encoder2.to(accelerator.device)
-            with accelerator.autocast():
+            with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device))):
                 train_dataset_group.new_cache_text_encoder_outputs([text_encoder1, text_encoder2], accelerator.is_main_process)
 
         accelerator.wait_for_everyone()
@@ -790,6 +794,7 @@ def train(args):
                         if (((not manual_grad_sync and accelerator.sync_gradients) 
                             or (manual_grad_sync and sync_gradients)) and args.max_grad_norm != 0.0):
                             accelerator.clip_grad_norm_(tensor, args.max_grad_norm)
+                        with 
                         optimizer.step_param(tensor, param_group)
                         tensor.grad = None
 
@@ -940,7 +945,10 @@ def train(args):
 
         current_val_loss, average_val_loss, val_logs = None, None, None
         if train_util.calculate_val_loss_check(args, global_step, 0, val_dataloader, train_dataloader):
-            current_val_loss, average_val_loss, val_logs = calculate_val_loss(global_step, 0, train_dataloader, val_loss_recorder, val_dataloader, cyclic_val_dataloader, tokenize_strategy, text_encoder1, text_encoder2, text_encoding_strategy, unet, vae, noise_scheduler, vae_dtype, weight_dtype, accelerator, args)
+            current_val_loss, average_val_loss, val_logs = calculate_val_loss(global_step, 0, train_dataloader, val_loss_recorder, val_dataloader, 
+                                                                              cyclic_val_dataloader, tokenize_strategy, text_encoder1, text_encoder2, 
+                                                                              text_encoding_strategy, unet, vae, noise_scheduler, vae_dtype, weight_dtype, 
+                                                                              accelerator, args)
         if len(accelerator.trackers) > 0:
             # log empty object to commit the sample images to wandb
             accelerator.log({}, step=0)
@@ -970,6 +978,8 @@ def train(args):
     iter_size = args.gradient_accumulation_steps
     accumulation_counter = 0
 
+    dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
+
     for epoch in range(num_train_epochs):
         accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
         current_epoch.value = epoch + 1
@@ -992,164 +1002,163 @@ def train(args):
 
                 with determine_grad_sync_context(accelerator, sync_gradients, training_models, lossweightMLP):
                     if "latents" in batch and batch["latents"] is not None:
-                        latents = batch["latents"].to(accelerator.device).to(dtype=weight_dtype)
+                        latents = batch["latents"].to(accelerator.device)
                     else:
                         with torch.no_grad():
                             # latentに変換
-                            latents = vae.encode(batch["images"].to(vae_dtype)).latent_dist.sample().to(weight_dtype)
+                            latents = vae.encode(batch["images"].to(vae_dtype)).latent_dist.sample()
 
                             # NaNが含まれていれば警告を表示し0に置き換える
                             if torch.any(torch.isnan(latents)):
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.nan_to_num(latents, 0, out=latents)
-                    latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
 
-                    if args.loss_related_use_float64:
-                        # Convert to float64, noise and noisy latents will be float64 due to using like on latents
-                        latents = latents.to(torch.float64)
+                    with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                        latents = latents.to(dtype=dtype_to_use)
+                        latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
 
-                    text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
-                    if text_encoder_outputs_list is not None:
-                        # Text Encoder outputs are cached
-                        encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoder_outputs_list
-                        encoder_hidden_states1 = encoder_hidden_states1.to(accelerator.device, dtype=weight_dtype)
-                        encoder_hidden_states2 = encoder_hidden_states2.to(accelerator.device, dtype=weight_dtype)
-                        pool2 = pool2.to(accelerator.device, dtype=weight_dtype)
-                    else:
-                        input_ids1, input_ids2 = batch["input_ids_list"]
-                        with torch.set_grad_enabled(args.train_text_encoder):
-                            # Get the text embedding for conditioning
-                            if args.weighted_captions:
-                                input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
-                                encoder_hidden_states1, encoder_hidden_states2, pool2 = (
-                                    text_encoding_strategy.encode_tokens_with_weights(
+                        text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
+                        if text_encoder_outputs_list is not None:
+                            # Text Encoder outputs are cached
+                            encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoder_outputs_list
+                            encoder_hidden_states1 = encoder_hidden_states1.to(device=accelerator.device, dtype=dtype_to_use)
+                            encoder_hidden_states2 = encoder_hidden_states2.to(device=accelerator.device, dtype=dtype_to_use)
+                            pool2 = pool2.to(device=accelerator.device, dtype=dtype_to_use)
+                        else:
+                            input_ids1, input_ids2 = batch["input_ids_list"]
+                            with torch.set_grad_enabled(args.train_text_encoder):
+                                # Get the text embedding for conditioning
+                                if args.weighted_captions:
+                                    input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
+                                    encoder_hidden_states1, encoder_hidden_states2, pool2 = (
+                                        text_encoding_strategy.encode_tokens_with_weights(
+                                            tokenize_strategy,
+                                            [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
+                                            input_ids_list,
+                                            weights_list,
+                                            dtype=dtype_to_use,
+                                            device=str(accelerator.device)
+                                        )
+                                    )
+                                else:
+                                    input_ids1 = input_ids1.to(accelerator.device)
+                                    input_ids2 = input_ids2.to(accelerator.device)
+                                    encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoding_strategy.encode_tokens(
                                         tokenize_strategy,
                                         [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
-                                        input_ids_list,
-                                        weights_list,
-                                        dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                        [input_ids1, input_ids2],
+                                        dtype=dtype_to_use,
                                         device=str(accelerator.device)
                                     )
-                                )
-                            else:
-                                input_ids1 = input_ids1.to(accelerator.device)
-                                input_ids2 = input_ids2.to(accelerator.device)
-                                encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoding_strategy.encode_tokens(
-                                    tokenize_strategy,
-                                    [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
-                                    [input_ids1, input_ids2],
-                                    dtype=torch.float64 if args.loss_related_use_float64 else None,
-                                    device=str(accelerator.device)
-                                )
-                            if args.full_fp16:
-                                encoder_hidden_states1 = encoder_hidden_states1.to(weight_dtype)
-                                encoder_hidden_states2 = encoder_hidden_states2.to(weight_dtype)
-                                pool2 = pool2.to(weight_dtype)
+                                if args.full_fp16:
+                                    encoder_hidden_states1 = encoder_hidden_states1.to(dtype_to_use)
+                                    encoder_hidden_states2 = encoder_hidden_states2.to(dtype_to_use)
+                                    pool2 = pool2.to(dtype_to_use)
 
-                    # get size embeddings
-                    orig_size = batch["original_sizes_hw"]
-                    crop_size = batch["crop_top_lefts"]
-                    target_size = batch["target_sizes_hw"]
-                    embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device).to(weight_dtype)
+                        # get size embeddings
+                        orig_size = batch["original_sizes_hw"]
+                        crop_size = batch["crop_top_lefts"]
+                        target_size = batch["target_sizes_hw"]
+                        embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device, 
+                                                                   dtype=dtype_to_use)
 
-                    # concat embeddings
-                    vector_embedding = torch.cat([pool2, embs], dim=1).to(weight_dtype)
-                    text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2).to(weight_dtype)
+                        # concat embeddings
+                        vector_embedding = torch.cat([pool2, embs], dim=1)
+                        text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2)
 
-                    # Sample noise, sample a random timestep for each image, and add noise to the latents,
-                    # with noise offset and/or multires noise if specified
-                    noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents)
+                        # Sample noise, sample a random timestep for each image, and add noise to the latents,
+                        # with noise offset and/or multires noise if specified
+                        noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents)
 
-                    noisy_latents = noisy_latents.to(weight_dtype)  # TODO check why noisy_latents is not weight_dtype
+                        # Predict the noise residual
+                        noise_pred = unet(to_stochastic(noisy_latents, dtype=weight_dtype), 
+                                          timesteps, 
+                                          to_stochastic(text_embedding, dtype=weight_dtype), 
+                                          to_stochastic(vector_embedding, dtype=weight_dtype))
 
-                    # Predict the noise residual
-                    with accelerator.autocast(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
-                        noise_pred = unet(noisy_latents, timesteps, text_embedding, vector_embedding)
+                        if args.loss_related_use_float64:
+                            noise_pred = noise_pred.to(torch.float64)
 
-                    if args.loss_related_use_float64:
-                        noise_pred = noise_pred.to(torch.float64)
+                        if args.v_parameterization:
+                            # v-parameterization training
+                            target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                        else:
+                            target = noise
 
-                    if args.v_parameterization:
-                        # v-parameterization training
-                        target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                    else:
-                        target = noise
+                        if args.loss_related_use_float64:
+                            target = target.to(torch.float64)
 
-                    if args.loss_related_use_float64:
-                        target = target.to(torch.float64)
-
-                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
-                    if (
-                        args.min_snr_gamma
-                        or args.scale_v_pred_loss_like_noise_pred
-                        or args.v_pred_like_loss
-                        or args.debiased_estimation_loss
-                        or args.masked_loss
-                        or args.loss_multipler 
-                        or args.loss_multiplier
-                        or args.edm2_loss_weighting
-                        or args.sangoi_loss_modifier
-                    ):
-                        
                         if noise_pred.dtype not in {torch.float32, torch.float64}:
                             noise_pred = noise_pred.float()
 
                         if target.dtype not in {torch.float32, torch.float64}:
                             target = target.float()
 
-                        # do not mean over batch dimension for snr weight or scale v-pred loss
-                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c)
-                        if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-                            loss = apply_masked_loss(loss, batch)
-                        loss = loss.mean([1, 2, 3])
+                        huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+                        if (
+                            args.min_snr_gamma
+                            or args.scale_v_pred_loss_like_noise_pred
+                            or args.v_pred_like_loss
+                            or args.debiased_estimation_loss
+                            or args.masked_loss
+                            or args.loss_multipler 
+                            or args.loss_multiplier
+                            or args.edm2_loss_weighting
+                            or args.sangoi_loss_modifier
+                        ):
+                            # do not mean over batch dimension for snr weight or scale v-pred loss
+                            loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c)
+                            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+                                loss = apply_masked_loss(loss, batch)
+                            loss = loss.mean([1, 2, 3])
 
-                        if args.sangoi_loss_modifier:
-                            # Min SNR should be zero for zero_terminal_snr
-                            if args.zero_terminal_snr:
-                                min_snr = 0
-                            else:
-                                min_snr = float(args.sangoi_loss_modifier_min_snr)
+                            if args.sangoi_loss_modifier:
+                                # Min SNR should be zero for zero_terminal_snr
+                                if args.zero_terminal_snr:
+                                    min_snr = 0
+                                else:
+                                    min_snr = float(args.sangoi_loss_modifier_min_snr)
 
-                            loss = loss * train_util.sangoi_loss_modifier(timesteps, 
-                                                                    noise_pred,
-                                                                    target, 
-                                                                    noise_scheduler,
-                                                                    min_snr,
-                                                                    float(args.sangoi_loss_modifier_max_snr))
+                                loss = loss * train_util.sangoi_loss_modifier(timesteps, 
+                                                                        noise_pred,
+                                                                        target, 
+                                                                        noise_scheduler,
+                                                                        min_snr,
+                                                                        float(args.sangoi_loss_modifier_max_snr))
 
-                        if args.min_snr_gamma and not args.sangoi_loss_modifier:
-                            loss = apply_snr_weight(loss, timesteps, noise_scheduler, args.min_snr_gamma, args.v_parameterization)
-                        if args.scale_v_pred_loss_like_noise_pred:
-                            loss = scale_v_prediction_loss_like_noise_prediction(loss, timesteps, noise_scheduler)
-                        if args.v_pred_like_loss:
-                            loss = add_v_prediction_like_loss(loss, timesteps, noise_scheduler, args.v_pred_like_loss)
-                        if args.debiased_estimation_loss:
-                            loss = apply_debiased_estimation(loss, timesteps, noise_scheduler, args.v_parameterization)
+                            if args.min_snr_gamma and not args.sangoi_loss_modifier:
+                                loss = apply_snr_weight(loss, timesteps, noise_scheduler, args.min_snr_gamma, args.v_parameterization)
+                            if args.scale_v_pred_loss_like_noise_pred:
+                                loss = scale_v_prediction_loss_like_noise_prediction(loss, timesteps, noise_scheduler)
+                            if args.v_pred_like_loss:
+                                loss = add_v_prediction_like_loss(loss, timesteps, noise_scheduler, args.v_pred_like_loss)
+                            if args.debiased_estimation_loss:
+                                loss = apply_debiased_estimation(loss, timesteps, noise_scheduler, args.v_parameterization)
 
-                        if args.loss_multipler or args.loss_multiplier:
-                            loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
+                            if args.loss_multipler or args.loss_multiplier:
+                                loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
 
-                        # For logging
-                        pre_scaling_loss = loss.mean()
+                            # For logging
+                            pre_scaling_loss = loss.mean()
 
-                        if args.edm2_loss_weighting:
-                            loss, loss_scaled = lossweightMLP(loss, timesteps)
-                            loss_scaled = loss_scaled.mean()
-                            loss_scaled = loss_scaled * grad_accum_loss_scaling
+                            if args.edm2_loss_weighting:
+                                loss, loss_scaled = lossweightMLP(loss, timesteps)
+                                loss_scaled = loss_scaled.mean()
+                                loss_scaled = loss_scaled * grad_accum_loss_scaling
 
-                        loss = loss.mean()  # Mean over batch
-                    else:
-                        if noise_pred.dtype not in {torch.float32, torch.float64}:
-                            noise_pred = noise_pred.float()
+                            loss = loss.mean()  # Mean over batch
+                        else:
+                            if noise_pred.dtype not in {torch.float32, torch.float64}:
+                                noise_pred = noise_pred.float()
 
-                        if target.dtype not in {torch.float32, torch.float64}:
-                            target = target.float()
+                            if target.dtype not in {torch.float32, torch.float64}:
+                                target = target.float()
 
-                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "mean", huber_c)
-                        pre_scaling_loss = loss
+                            loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "mean", huber_c)
+                            pre_scaling_loss = loss
 
-                    # Divide loss by iter_size to average over accumulated steps
-                    loss = loss * grad_accum_loss_scaling
+                            # Divide loss by iter_size to average over accumulated steps
+                            loss = loss * grad_accum_loss_scaling
 
                     accelerator.backward(loss)
 
@@ -1240,7 +1249,10 @@ def train(args):
                             )
 
                             if train_util.calculate_val_loss_check(args, global_step, step, val_dataloader, train_dataloader):
-                                current_val_loss, average_val_loss, val_logs = calculate_val_loss(global_step, step, train_dataloader, val_loss_recorder, val_dataloader, cyclic_val_dataloader, tokenize_strategy, text_encoder1, text_encoder2, text_encoding_strategy, unet, vae, noise_scheduler, vae_dtype, weight_dtype, accelerator, args)
+                                current_val_loss, average_val_loss, val_logs = calculate_val_loss(global_step, step, train_dataloader, val_loss_recorder, 
+                                                                                                  val_dataloader, cyclic_val_dataloader, tokenize_strategy, 
+                                                                                                  text_encoder1, text_encoder2, text_encoding_strategy, unet, 
+                                                                                                  vae, noise_scheduler, vae_dtype, weight_dtype, accelerator, args)
 
                             # 指定ステップごとにモデルを保存
                             if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:
@@ -1320,153 +1332,152 @@ def train(args):
 
                 with accelerator.accumulate(*training_models, lossweightMLP) if args.edm2_loss_weighting else accelerator.accumulate(*training_models):
                     if "latents" in batch and batch["latents"] is not None:
-                        latents = batch["latents"].to(accelerator.device).to(dtype=weight_dtype)
+                        latents = batch["latents"].to(accelerator.device)
                     else:
                         with torch.no_grad():
                             # latentに変換
-                            latents = vae.encode(batch["images"].to(vae_dtype)).latent_dist.sample().to(weight_dtype)
+                            latents = vae.encode(batch["images"].to(vae_dtype)).latent_dist.sample()
 
                             # NaNが含まれていれば警告を表示し0に置き換える
                             if torch.any(torch.isnan(latents)):
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.nan_to_num(latents, 0, out=latents)
-                    latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
-                    
-                    if args.loss_related_use_float64:
-                        # Convert to float64, noise and noisy latents will be float64 due to using like on latents
-                        latents = latents.to(torch.float64)
 
-                    text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
-                    if text_encoder_outputs_list is not None:
-                        # Text Encoder outputs are cached
-                        encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoder_outputs_list
-                        encoder_hidden_states1 = encoder_hidden_states1.to(accelerator.device, dtype=weight_dtype)
-                        encoder_hidden_states2 = encoder_hidden_states2.to(accelerator.device, dtype=weight_dtype)
-                        pool2 = pool2.to(accelerator.device, dtype=weight_dtype)
-                    else:
-                        input_ids1, input_ids2 = batch["input_ids_list"]
-                        with torch.set_grad_enabled(args.train_text_encoder):
-                            # Get the text embedding for conditioning
-                            if args.weighted_captions:
-                                input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
-                                encoder_hidden_states1, encoder_hidden_states2, pool2 = (
-                                    text_encoding_strategy.encode_tokens_with_weights(
+                    with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                        latents = latents.to(dtype=dtype_to_use)
+                        latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
+                
+                        text_encoder_outputs_list = batch.get("text_encoder_outputs_list", None)
+                        if text_encoder_outputs_list is not None:
+                            # Text Encoder outputs are cached
+                            encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoder_outputs_list
+                            encoder_hidden_states1 = encoder_hidden_states1.to(device=accelerator.device, dtype=dtype_to_use)
+                            encoder_hidden_states2 = encoder_hidden_states2.to(device=accelerator.device, dtype=dtype_to_use)
+                            pool2 = pool2.to(device=accelerator.device, dtype=dtype_to_use)
+                        else:
+                            input_ids1, input_ids2 = batch["input_ids_list"]
+                            with torch.set_grad_enabled(args.train_text_encoder):
+                                # Get the text embedding for conditioning
+                                if args.weighted_captions:
+                                    input_ids_list, weights_list = tokenize_strategy.tokenize_with_weights(batch["captions"])
+                                    encoder_hidden_states1, encoder_hidden_states2, pool2 = (
+                                        text_encoding_strategy.encode_tokens_with_weights(
+                                            tokenize_strategy,
+                                            [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
+                                            input_ids_list,
+                                            weights_list,
+                                            dtype=dtype_to_use,
+                                            device=str(accelerator.device)
+                                        )
+                                    )
+                                else:
+                                    input_ids1 = input_ids1.to(accelerator.device)
+                                    input_ids2 = input_ids2.to(accelerator.device)
+                                    encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoding_strategy.encode_tokens(
                                         tokenize_strategy,
                                         [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
-                                        input_ids_list,
-                                        weights_list,
-                                        dtype=torch.float64 if args.loss_related_use_float64 else None,
+                                        [input_ids1, input_ids2],
+                                        dtype=dtype_to_use,
                                         device=str(accelerator.device)
-                                    )
-                                )
-                            else:
-                                input_ids1 = input_ids1.to(accelerator.device)
-                                input_ids2 = input_ids2.to(accelerator.device)
-                                encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoding_strategy.encode_tokens(
-                                    tokenize_strategy,
-                                    [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
-                                    [input_ids1, input_ids2],
-                                    dtype=torch.float64 if args.loss_related_use_float64 else None,
-                                    device=str(accelerator.device)
                                 )
                             if args.full_fp16:
-                                encoder_hidden_states1 = encoder_hidden_states1.to(weight_dtype)
-                                encoder_hidden_states2 = encoder_hidden_states2.to(weight_dtype)
-                                pool2 = pool2.to(weight_dtype)
+                                encoder_hidden_states1 = encoder_hidden_states1.to(dtype_to_use)
+                                encoder_hidden_states2 = encoder_hidden_states2.to(dtype_to_use)
+                                pool2 = pool2.to(dtype_to_use)
 
-                    # get size embeddings
-                    orig_size = batch["original_sizes_hw"]
-                    crop_size = batch["crop_top_lefts"]
-                    target_size = batch["target_sizes_hw"]
-                    embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device).to(weight_dtype)
+                        # get size embeddings
+                        orig_size = batch["original_sizes_hw"]
+                        crop_size = batch["crop_top_lefts"]
+                        target_size = batch["target_sizes_hw"]
+                        embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device, dtype=dtype_to_use)
 
-                    # concat embeddings
-                    vector_embedding = torch.cat([pool2, embs], dim=1).to(weight_dtype)
-                    text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2).to(weight_dtype)
+                        # concat embeddings
+                        vector_embedding = torch.cat([pool2, embs], dim=1)
+                        text_embedding = torch.cat([encoder_hidden_states1, encoder_hidden_states2], dim=2)
 
-                    # Sample noise, sample a random timestep for each image, and add noise to the latents,
-                    # with noise offset and/or multires noise if specified
-                    noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents)
+                        # Sample noise, sample a random timestep for each image, and add noise to the latents,
+                        # with noise offset and/or multires noise if specified
+                        noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents)
 
-                    noisy_latents = noisy_latents.to(weight_dtype)  # TODO check why noisy_latents is not weight_dtype
+                        # Predict the noise residual
+                        noise_pred = unet(to_stochastic(noisy_latents, dtype=weight_dtype), 
+                                            timesteps, 
+                                            to_stochastic(text_embedding, dtype=weight_dtype), 
+                                            to_stochastic(vector_embedding, dtype=weight_dtype))
 
-                    # Predict the noise residual
-                    with accelerator.autocast(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
-                        noise_pred = unet(noisy_latents, timesteps, text_embedding, vector_embedding)
+                        if args.loss_related_use_float64:
+                            noise_pred = noise_pred.to(torch.float64)
 
-                    if args.v_parameterization:
-                        # v-parameterization training
-                        target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                    else:
-                        target = noise
+                        if args.v_parameterization:
+                            # v-parameterization training
+                            target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                        else:
+                            target = noise
 
-                    huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
-                    if (
-                        args.min_snr_gamma
-                        or args.scale_v_pred_loss_like_noise_pred
-                        or args.v_pred_like_loss
-                        or args.debiased_estimation_loss
-                        or args.masked_loss
-                        or args.loss_multipler 
-                        or args.loss_multiplier
-                        or args.edm2_loss_weighting
-                        or args.sangoi_loss_modifier
-                    ):
+                        if args.loss_related_use_float64:
+                            target = target.to(torch.float64)
+
                         if noise_pred.dtype not in {torch.float32, torch.float64}:
                             noise_pred = noise_pred.float()
 
                         if target.dtype not in {torch.float32, torch.float64}:
                             target = target.float()
 
-                        # do not mean over batch dimension for snr weight or scale v-pred loss
-                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c)
-                        if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-                            loss = apply_masked_loss(loss, batch)
-                        loss = loss.mean([1, 2, 3])
+                        huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+                        if (
+                            args.min_snr_gamma
+                            or args.scale_v_pred_loss_like_noise_pred
+                            or args.v_pred_like_loss
+                            or args.debiased_estimation_loss
+                            or args.masked_loss
+                            or args.loss_multipler 
+                            or args.loss_multiplier
+                            or args.edm2_loss_weighting
+                            or args.sangoi_loss_modifier
+                        ):
+                            # do not mean over batch dimension for snr weight or scale v-pred loss
+                            loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "none", huber_c)
+                            if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
+                                loss = apply_masked_loss(loss, batch)
+                            loss = loss.mean([1, 2, 3])
 
-                        if args.sangoi_loss_modifier:
-                            # Min SNR should be zero for zero_terminal_snr
-                            if args.zero_terminal_snr:
-                                min_snr = 0
-                            else:
-                                min_snr = float(args.sangoi_loss_modifier_min_snr)
+                            if args.sangoi_loss_modifier:
+                                # Min SNR should be zero for zero_terminal_snr
+                                if args.zero_terminal_snr:
+                                    min_snr = 0
+                                else:
+                                    min_snr = float(args.sangoi_loss_modifier_min_snr)
 
-                            loss = loss * train_util.sangoi_loss_modifier(timesteps, 
-                                                                    noise_pred, 
-                                                                    target, 
-                                                                    noise_scheduler,
-                                                                    min_snr,
-                                                                    float(args.sangoi_loss_modifier_max_snr))
+                                loss = loss * train_util.sangoi_loss_modifier(timesteps, 
+                                                                        noise_pred, 
+                                                                        target, 
+                                                                        noise_scheduler,
+                                                                        min_snr,
+                                                                        float(args.sangoi_loss_modifier_max_snr))
 
-                        if args.min_snr_gamma and not args.sangoi_loss_modifier:
-                            loss = apply_snr_weight(loss, timesteps, noise_scheduler, args.min_snr_gamma, args.v_parameterization)
-                        if args.scale_v_pred_loss_like_noise_pred:
-                            loss = scale_v_prediction_loss_like_noise_prediction(loss, timesteps, noise_scheduler)
-                        if args.v_pred_like_loss:
-                            loss = add_v_prediction_like_loss(loss, timesteps, noise_scheduler, args.v_pred_like_loss)
-                        if args.debiased_estimation_loss:
-                            loss = apply_debiased_estimation(loss, timesteps, noise_scheduler, args.v_parameterization)
+                            if args.min_snr_gamma and not args.sangoi_loss_modifier:
+                                loss = apply_snr_weight(loss, timesteps, noise_scheduler, args.min_snr_gamma, args.v_parameterization)
+                            if args.scale_v_pred_loss_like_noise_pred:
+                                loss = scale_v_prediction_loss_like_noise_prediction(loss, timesteps, noise_scheduler)
+                            if args.v_pred_like_loss:
+                                loss = add_v_prediction_like_loss(loss, timesteps, noise_scheduler, args.v_pred_like_loss)
+                            if args.debiased_estimation_loss:
+                                loss = apply_debiased_estimation(loss, timesteps, noise_scheduler, args.v_parameterization)
 
-                        if args.loss_multipler or args.loss_multiplier:
-                            loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
+                            if args.loss_multipler or args.loss_multiplier:
+                                loss.mul_(float(args.loss_multipler or args.loss_multiplier) if args.loss_multipler is not None or args.loss_multiplier is not None else 1.0)
 
-                        # For logging
-                        pre_scaling_loss = loss.mean()
+                            # For logging
+                            pre_scaling_loss = loss.mean()
 
-                        if args.edm2_loss_weighting:
-                            loss, loss_scaled = lossweightMLP(loss, timesteps)
-                            loss_scaled = loss_scaled.mean()
+                            if args.edm2_loss_weighting:
+                                loss, loss_scaled = lossweightMLP(loss, timesteps)
+                                loss_scaled = loss_scaled.mean()
 
-                        loss = loss.mean()  # Mean over batch
-                    else:
-                        if noise_pred.dtype not in {torch.float32, torch.float64}:
-                            noise_pred = noise_pred.float()
-
-                        if target.dtype not in {torch.float32, torch.float64}:
-                            target = target.float()
-
-                        loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "mean", huber_c)
-                        pre_scaling_loss = loss
+                            loss = loss.mean()  # Mean over batch
+                        else:
+                            loss = train_util.conditional_loss(noise_pred, target, args.loss_type, "mean", huber_c)
+                            pre_scaling_loss = loss
 
                     accelerator.backward(loss)
 
@@ -1545,7 +1556,10 @@ def train(args):
                         )
 
                         if train_util.calculate_val_loss_check(args, global_step, step, val_dataloader, train_dataloader):
-                            current_val_loss, average_val_loss, val_logs = calculate_val_loss(global_step, step, train_dataloader, val_loss_recorder, val_dataloader, cyclic_val_dataloader, tokenize_strategy, text_encoder1, text_encoder2, text_encoding_strategy, unet, vae, noise_scheduler, vae_dtype, weight_dtype, accelerator, args)
+                            current_val_loss, average_val_loss, val_logs = calculate_val_loss(global_step, step, train_dataloader, val_loss_recorder, val_dataloader, 
+                                                                                              cyclic_val_dataloader, tokenize_strategy, text_encoder1, text_encoder2, 
+                                                                                              text_encoding_strategy, unet, vae, noise_scheduler, vae_dtype, weight_dtype, 
+                                                                                              accelerator, args)
 
                         # 指定ステップごとにモデルを保存
                         if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:

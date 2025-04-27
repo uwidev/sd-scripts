@@ -5,7 +5,7 @@ import random
 from typing import Any, Optional
 
 import torch
-from accelerate import Accelerator, AutocastKwargs
+from accelerate import Accelerator
 
 from library.device_utils import clean_memory_on_device, init_ipex
 from library.strategy_flux import move_vision_encoder_to_device
@@ -27,6 +27,8 @@ from library.utils import setup_logging
 from library.custom_train_functions import (
     prepare_scheduler_for_custom_training,
 )
+
+from tools.stochastic_copy import to_stochastic
 
 setup_logging()
 import logging
@@ -226,19 +228,18 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
                 # otherwise, we need to convert it to target dtype
                 text_encoders[1].to(weight_dtype)
 
-            with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
+            with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else torch.float32, device_type=str(accelerator.device)):
                 dataset.new_cache_text_encoder_outputs(text_encoders, accelerator)
 
-            # cache sample prompts
-            if args.sample_prompts is not None:
-                logger.info(f"cache Text Encoder outputs for sample prompt: {args.sample_prompts}")
+                # cache sample prompts
+                if args.sample_prompts is not None:
+                    logger.info(f"cache Text Encoder outputs for sample prompt: {args.sample_prompts}")
 
-                tokenize_strategy: strategy_flux.FluxTokenizeStrategy = strategy_base.TokenizeStrategy.get_strategy()
-                text_encoding_strategy: strategy_flux.FluxTextEncodingStrategy = strategy_base.TextEncodingStrategy.get_strategy()
+                    tokenize_strategy: strategy_flux.FluxTokenizeStrategy = strategy_base.TokenizeStrategy.get_strategy()
+                    text_encoding_strategy: strategy_flux.FluxTextEncodingStrategy = strategy_base.TextEncodingStrategy.get_strategy()
 
-                prompts = train_util.load_prompts(args.sample_prompts)
-                sample_prompts_te_outputs = {}  # key: prompt, value: text encoder outputs
-                with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)), torch.no_grad():
+                    prompts = train_util.load_prompts(args.sample_prompts)
+                    sample_prompts_te_outputs = {}  # key: prompt, value: text encoder outputs
                     for prompt_dict in prompts:
                         for p in [prompt_dict.get("prompt", ""), prompt_dict.get("negative_prompt", "")]:
                             if p not in sample_prompts_te_outputs:
@@ -246,12 +247,12 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
                                 tokens_and_masks = tokenize_strategy.tokenize(p)
                                 sample_prompts_te_outputs[p] = text_encoding_strategy.encode_tokens(
                                     tokenize_strategy, text_encoders, tokens_and_masks, args.apply_t5_attn_mask,
-                                    dtype=torch.float64 if args.loss_related_use_float64 else None, 
+                                    dtype=torch.float64 if args.loss_related_use_float64 else torch.float32, 
                                     device=str(accelerator.device)
                                 )
-                self.sample_prompts_te_outputs = sample_prompts_te_outputs
+                    self.sample_prompts_te_outputs = sample_prompts_te_outputs
 
-            accelerator.wait_for_everyone()
+                accelerator.wait_for_everyone()
 
             # move back to cpu
             if not self.is_train_text_encoder(args):
@@ -352,28 +353,28 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
         fixed_timesteps=None,
         train=True,
         timestep_sampler=None,
-    ):       
-        if args.loss_related_use_float64:
-            # Convert to float64, noise and noisy latents will be float64 due to using like on latents
-            latents = latents.to(torch.float64)
+):      
+        dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
+        with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
+            latents = latents.to(dtype_to_use)
 
-        # Sample noise that we'll add to the latents
-        noise = torch.randn_like(latents)
-        bsz = latents.shape[0]
+            # Sample noise that we'll add to the latents
+            noise = torch.randn_like(latents)
+            bsz = latents.shape[0]
 
-        # get noisy model input and timesteps
-        noisy_model_input, timesteps, sigmas = flux_train_utils.get_noisy_model_input_and_timesteps(
-            args, noise_scheduler, latents, noise, accelerator.device, torch.float64 if args.loss_related_use_float64 else weight_dtype, fixed_timesteps, train
-        )
+            # get noisy model input and timesteps
+            noisy_model_input, timesteps, sigmas = flux_train_utils.get_noisy_model_input_and_timesteps(
+                args, noise_scheduler, latents, noise, accelerator.device, dtype_to_use, fixed_timesteps, train
+            )
 
-        # pack latents and get img_ids
-        packed_noisy_model_input = flux_utils.pack_latents(noisy_model_input)  # b, c, h*2, w*2 -> b, h*w, c*4
-        packed_latent_height, packed_latent_width = noisy_model_input.shape[2] // 2, noisy_model_input.shape[3] // 2
-        img_ids = flux_utils.prepare_img_ids(bsz, packed_latent_height, packed_latent_width).to(device=accelerator.device)
+            # pack latents and get img_ids
+            packed_noisy_model_input = flux_utils.pack_latents(noisy_model_input)  # b, c, h*2, w*2 -> b, h*w, c*4
+            packed_latent_height, packed_latent_width = noisy_model_input.shape[2] // 2, noisy_model_input.shape[3] // 2
+            img_ids = flux_utils.prepare_img_ids(bsz, packed_latent_height, packed_latent_width).to(device=accelerator.device)
 
-        # get guidance
-        # ensure guidance_scale in args is float
-        guidance_vec = torch.full((bsz,), float(args.guidance_scale), device=accelerator.device, dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
+            # get guidance
+            # ensure guidance_scale in args is float
+            guidance_vec = torch.full((bsz,), float(args.guidance_scale), device=accelerator.device, dtype=dtype_to_use)
 
         # ensure the hidden state will require grad
         if args.gradient_checkpointing and train:
@@ -386,6 +387,7 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
 
         # Predict the noise residual
         l_pooled, t5_out, txt_ids, t5_attn_mask = text_encoder_conds
+
         if not args.apply_t5_attn_mask:
             t5_attn_mask = None
 
@@ -403,18 +405,17 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
         def call_dit(img, img_ids, t5_out, txt_ids, l_pooled, timesteps, guidance_vec, t5_attn_mask):
             # if not args.split_mode:
             # normal forward
-            with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
-                # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transformer model (we should not keep it but I want to keep the inputs same for the model for testing)
-                model_pred = unet(
-                    img=img,
-                    img_ids=img_ids,
-                    txt=t5_out,
-                    txt_ids=txt_ids,
-                    y=l_pooled,
-                    timesteps=timesteps / 1000,
-                    guidance=guidance_vec,
-                    txt_attention_mask=t5_attn_mask,
-                )
+            # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transformer model (we should not keep it but I want to keep the inputs same for the model for testing)
+            model_pred = unet(
+                img=img,
+                img_ids=img_ids,
+                txt=t5_out,
+                txt_ids=txt_ids,
+                y=l_pooled,
+                timesteps=timesteps,
+                guidance=guidance_vec,
+                txt_attention_mask=t5_attn_mask,
+            )
             """
             else:
                 # split forward to reduce memory usage
@@ -453,26 +454,35 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
             """
 
             return model_pred
-
+        
         model_pred = call_dit(
-            img=packed_noisy_model_input,
-            img_ids=img_ids,
-            t5_out=t5_out,
-            txt_ids=txt_ids,
-            l_pooled=l_pooled,
-            timesteps=timesteps,
-            guidance_vec=guidance_vec,
-            t5_attn_mask=t5_attn_mask,
+            img=to_stochastic(packed_noisy_model_input, weight_dtype),
+            img_ids=to_stochastic(img_ids, weight_dtype),
+            t5_out=to_stochastic(t5_out, weight_dtype),
+            txt_ids=to_stochastic(txt_ids, weight_dtype),
+            l_pooled=to_stochastic(l_pooled, weight_dtype),
+            timesteps=to_stochastic(timesteps / 1000, weight_dtype),
+            guidance_vec=to_stochastic(guidance_vec, weight_dtype),
+            t5_attn_mask=to_stochastic(t5_attn_mask, weight_dtype)
         )
 
-        # unpack latents
-        model_pred = flux_utils.unpack_latents(model_pred, packed_latent_height, packed_latent_width)
+        with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
+            model_pred = model_pred.to(dtype_to_use)
 
-        # apply model prediction type
-        model_pred, weighting = flux_train_utils.apply_model_prediction_type(args, model_pred, noisy_model_input, sigmas, train)
+            # unpack latents
+            model_pred = flux_utils.unpack_latents(model_pred, packed_latent_height, packed_latent_width)
 
-        # flow matching loss: this is different from SD3
-        target = noise - latents
+            # apply model prediction type
+            model_pred, weighting = flux_train_utils.apply_model_prediction_type(args, model_pred, noisy_model_input, sigmas, train)
+
+            # flow matching loss: this is different from SD3
+            target = noise - latents
+
+            if model_pred.dtype not in {torch.float32, torch.float64}:
+                model_pred = model_pred.float()
+
+            if target.dtype not in {torch.float32, torch.float64}:
+                target = target.float()
 
         # differential output preservation
         if "custom_attributes" in batch:
@@ -495,16 +505,19 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
                         guidance_vec=guidance_vec[diff_output_pr_indices] if guidance_vec is not None else None,
                         t5_attn_mask=t5_attn_mask[diff_output_pr_indices] if t5_attn_mask is not None else None,
                     )
-                network.set_multiplier(1.0)  # may be overwritten by "network_multipliers" in the next step
+                    network.set_multiplier(1.0)  # may be overwritten by "network_multipliers" in the next step
 
-                model_pred_prior = flux_utils.unpack_latents(model_pred_prior, packed_latent_height, packed_latent_width)
-                model_pred_prior, _ = flux_train_utils.apply_model_prediction_type(
-                    args,
-                    model_pred_prior,
-                    noisy_model_input[diff_output_pr_indices],
-                    sigmas[diff_output_pr_indices] if sigmas is not None else None,
-                )
-                target[diff_output_pr_indices] = model_pred_prior.to(target.dtype)
+                with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
+                    model_pred_prior = model_pred.to(dtype_to_use)
+
+                    model_pred_prior = flux_utils.unpack_latents(model_pred_prior, packed_latent_height, packed_latent_width)
+                    model_pred_prior, _ = flux_train_utils.apply_model_prediction_type(
+                        args,
+                        model_pred_prior,
+                        noisy_model_input[diff_output_pr_indices],
+                        sigmas[diff_output_pr_indices] if sigmas is not None else None,
+                    )
+                    target[diff_output_pr_indices] = model_pred_prior.to(target.dtype)
 
         return model_pred, target, timesteps, weighting, None
 

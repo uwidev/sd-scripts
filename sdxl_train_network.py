@@ -2,7 +2,7 @@ import argparse
 from typing import List, Optional
 
 import torch
-from accelerate import Accelerator, AutocastKwargs
+from accelerate import Accelerator
 from library.device_utils import init_ipex, clean_memory_on_device
 
 init_ipex()
@@ -106,7 +106,7 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
             # When TE is not be trained, it will not be prepared so we need to use explicit autocast
             text_encoders[0].to(accelerator.device, dtype=weight_dtype)
             text_encoders[1].to(accelerator.device, dtype=weight_dtype)
-            with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else None, device_type=str(accelerator.device)):
+            with torch.autocast(dtype=torch.float64 if args.loss_related_use_float64 else torch.float32, device_type=str(accelerator.device)):
                 dataset.new_cache_text_encoder_outputs(text_encoders + [accelerator.unwrap_model(text_encoders[-1])], accelerator)
             accelerator.wait_for_everyone()
 
@@ -150,13 +150,14 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
                     tokenizers[1],
                     text_encoders[0],
                     text_encoders[1],
-                    None if not args.full_fp16 else torch.float64 if args.loss_related_use_float64 else weight_dtype,
+                    None,
                     accelerator=accelerator,
+                    dtype=torch.float64 if args.loss_related_use_float64 else torch.float32
                 )
         else:
-            encoder_hidden_states1 = batch["text_encoder_outputs1_list"].to(accelerator.device).to(torch.float64 if args.loss_related_use_float64 else weight_dtype)
-            encoder_hidden_states2 = batch["text_encoder_outputs2_list"].to(accelerator.device).to(torch.float64 if args.loss_related_use_float64 else weight_dtype)
-            pool2 = batch["text_encoder_pool2_list"].to(accelerator.device).to(torch.float64 if args.loss_related_use_float64 else weight_dtype)
+            encoder_hidden_states1 = batch["text_encoder_outputs1_list"].to(device=accelerator.device, dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
+            encoder_hidden_states2 = batch["text_encoder_outputs2_list"].to(device=accelerator.device, dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
+            pool2 = batch["text_encoder_pool2_list"].to(device=accelerator.device, dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
 
             # # verify that the text encoder outputs are correct
             # ehs1, ehs2, p2 = train_util.get_hidden_states_sdxl(
@@ -208,7 +209,10 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
                 text_embedding = text_embedding[indices]
                 vector_embedding = vector_embedding[indices]
 
-            noise_pred = unet(to_stochastic(noisy_latents, dtype=weight_dtype), timesteps, to_stochastic(text_embedding, dtype=weight_dtype), to_stochastic(vector_embedding, dtype=weight_dtype))
+            noise_pred = unet(to_stochastic(noisy_latents, dtype=weight_dtype), 
+                              timesteps, 
+                              to_stochastic(text_embedding, dtype=weight_dtype), 
+                              to_stochastic(vector_embedding, dtype=weight_dtype))
             return noise_pred
 
     def sample_images(self, accelerator, args, epoch, global_step, device, vae, tokenizer, text_encoder, unet):
