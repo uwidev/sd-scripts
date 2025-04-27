@@ -6118,7 +6118,7 @@ def save_loss_weights_model_on_epoch_end_or_stepwise(
     metadata["ss_steps"] = str(global_step)
     metadata["ss_epoch"] = str(epoch_no)
 
-    sai_metadata = get_sai_model_spec(args)
+    sai_metadata = get_sai_model_spec(None, args, bool(args.sdxl), False, False, True)
     metadata.update(sai_metadata)
 
     unwrapped_nw.save_weights(ckpt_file, torch.float32, metadata)
@@ -6162,7 +6162,7 @@ def save_loss_weights_model_on_train_end(
     metadata["ss_steps"] = str(global_step)
     metadata["ss_epoch"] = str(epoch)
 
-    sai_metadata = get_sai_model_spec(args)
+    sai_metadata = get_sai_model_spec(None, args, bool(args.sdxl), False, False, True)
     metadata.update(sai_metadata)
 
     unwrapped_nw.save_weights(ckpt_file, torch.float32, metadata)
