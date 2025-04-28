@@ -124,22 +124,11 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
             text_encoders[1].to(accelerator.device, dtype=weight_dtype)
 
     def get_text_cond(self, args, accelerator, batch, tokenizers, text_encoders, weight_dtype):
+        dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
         if "text_encoder_outputs1_list" not in batch or batch["text_encoder_outputs1_list"] is None:
-            with torch.enable_grad(), torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+            with torch.enable_grad(), torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
                 input_ids1 = batch["input_ids"]
                 input_ids2 = batch["input_ids2"]
-                # Get the text embedding for conditioning
-                # TODO support weighted captions
-                # if args.weighted_captions:
-                #     encoder_hidden_states = get_weighted_text_embeddings(
-                #         tokenizer,
-                #         text_encoder,
-                #         batch["captions"],
-                #         accelerator.device,
-                #         args.max_token_length // 75 if args.max_token_length else 1,
-                #         clip_skip=args.clip_skip,
-                #     )
-                # else:
                 input_ids1 = input_ids1.to(accelerator.device)
                 input_ids2 = input_ids2.to(accelerator.device)
                 encoder_hidden_states1, encoder_hidden_states2, pool2 = train_util.get_hidden_states_sdxl(
@@ -152,29 +141,13 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
                     text_encoders[1],
                     None,
                     accelerator=accelerator,
-                    dtype=torch.float64 if args.loss_related_use_float64 else torch.float32
+                    dtype=dtype_to_use,
+                    device=accelerator.device,
                 )
         else:
-            encoder_hidden_states1 = batch["text_encoder_outputs1_list"].to(device=accelerator.device, dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
-            encoder_hidden_states2 = batch["text_encoder_outputs2_list"].to(device=accelerator.device, dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
-            pool2 = batch["text_encoder_pool2_list"].to(device=accelerator.device, dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
-
-            # # verify that the text encoder outputs are correct
-            # ehs1, ehs2, p2 = train_util.get_hidden_states_sdxl(
-            #     args.max_token_length,
-            #     batch["input_ids"].to(text_encoders[0].device),
-            #     batch["input_ids2"].to(text_encoders[0].device),
-            #     tokenizers[0],
-            #     tokenizers[1],
-            #     text_encoders[0],
-            #     text_encoders[1],
-            #     None if not args.full_fp16 else weight_dtype,
-            # )
-            # b_size = encoder_hidden_states1.shape[0]
-            # assert ((encoder_hidden_states1.to("cpu") - ehs1.to(dtype=weight_dtype)).abs().max() > 1e-2).sum() <= b_size * 2
-            # assert ((encoder_hidden_states2.to("cpu") - ehs2.to(dtype=weight_dtype)).abs().max() > 1e-2).sum() <= b_size * 2
-            # assert ((pool2.to("cpu") - p2.to(dtype=weight_dtype)).abs().max() > 1e-2).sum() <= b_size * 2
-            # logger.info("text encoder outputs verified")
+            encoder_hidden_states1 = batch["text_encoder_outputs1_list"].to(device=accelerator.device, dtype=dtype_to_use)
+            encoder_hidden_states2 = batch["text_encoder_outputs2_list"].to(device=accelerator.device, dtype=dtype_to_use)
+            pool2 = batch["text_encoder_pool2_list"].to(device=accelerator.device, dtype=dtype_to_use)
 
         return encoder_hidden_states1, encoder_hidden_states2, pool2
 
@@ -190,13 +163,14 @@ class SdxlNetworkTrainer(train_network.NetworkTrainer):
         weight_dtype,
         indices: Optional[List[int]] = None,
     ):
-        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+        dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
+        with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
             # get size embeddings
             orig_size = batch["original_sizes_hw"]
             crop_size = batch["crop_top_lefts"]
             target_size = batch["target_sizes_hw"]
             embs = sdxl_train_util.get_size_embeddings(orig_size, crop_size, target_size, accelerator.device, 
-                                                       dtype=torch.float64 if args.loss_related_use_float64 else torch.float32)
+                                                       dtype=dtype_to_use)
 
             # concat embeddings
             encoder_hidden_states1, encoder_hidden_states2, pool2 = text_conds

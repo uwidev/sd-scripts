@@ -148,7 +148,7 @@ def process_val_batch(batch, tokenize_strategy, text_encoder1, text_encoder2, te
                 clean_memory_on_device(accelerator.device)
 
         
-        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+        with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
             latents = latents.to(dtype=dtype_to_use)
             latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
 
@@ -546,7 +546,7 @@ def train(args):
 
             text_encoder1.to(accelerator.device)
             text_encoder2.to(accelerator.device)
-            with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+            with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
                 train_dataset_group.new_cache_text_encoder_outputs([text_encoder1, text_encoder2], accelerator.is_main_process)
 
         accelerator.wait_for_everyone()
@@ -1012,7 +1012,7 @@ def train(args):
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.nan_to_num(latents, 0, out=latents)
 
-                    with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                    with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
                         latents = latents.to(dtype=dtype_to_use)
                         latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
 
@@ -1342,7 +1342,7 @@ def train(args):
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.nan_to_num(latents, 0, out=latents)
 
-                    with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                    with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
                         latents = latents.to(dtype=dtype_to_use)
                         latents = latents * sdxl_model_util.VAE_SCALE_FACTOR
                 
@@ -1370,8 +1370,8 @@ def train(args):
                                         )
                                     )
                                 else:
-                                    input_ids1 = input_ids1.to(accelerator.device)
-                                    input_ids2 = input_ids2.to(accelerator.device)
+                                    input_ids1 = input_ids1.to(device=accelerator.device, dtype=dtype_to_use)
+                                    input_ids2 = input_ids2.to(device=accelerator.device, dtype=dtype_to_use)
                                     encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoding_strategy.encode_tokens(
                                         tokenize_strategy,
                                         [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],

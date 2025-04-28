@@ -90,7 +90,8 @@ class FluxTextEncodingStrategy(TextEncodingStrategy):
         dtype = None, 
         device = None,
     ) -> List[torch.Tensor]:
-        with torch.autocast(enabled=dtype is not None, dtype=torch.float64, device_type=str(device)):
+        dtype_to_use = dtype if dtype is not None else torch.float32
+        with torch.autocast(dtype=dtype_to_use, device_type=str(device)):
             # supports single model inference
 
             if apply_t5_attn_mask is None:

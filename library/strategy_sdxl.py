@@ -116,10 +116,11 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
         text_encoder1: Union[CLIPTextModel, torch.nn.Module],
         text_encoder2: Union[CLIPTextModelWithProjection, torch.nn.Module],
         unwrapped_text_encoder2: Optional[CLIPTextModelWithProjection] = None,
-        dtype = None,
+        dtype = torch.float32,
         device = None,
     ):
-        with torch.autocast(enabled=dtype is not None, dtype=dtype, device_type=device):
+        dtype_to_use = dtype if dtype is not None else torch.float32
+        with torch.autocast(dtype=dtype_to_use, device_type=device):
             # input_ids: b,n,77 -> b*n, 77
             b_size = input_ids1.size()[0]
             if input_ids1.size()[1] == 1:
@@ -177,7 +178,7 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
             return hidden_states1, hidden_states2, pool2
 
     def encode_tokens(
-        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor], dtype = None, device = None,
+        self, tokenize_strategy: TokenizeStrategy, models: List[Any], tokens: List[torch.Tensor], dtype = torch.float32, device = None,
     ) -> List[torch.Tensor]:
         """
         Args:
@@ -186,7 +187,7 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
                 If text_encoder2 is wrapped by accelerate, unwrapped_text_encoder2 is required
             tokens: List of tokens, for text_encoder1 and text_encoder2
         """
-        with torch.autocast(enabled=dtype is not None, dtype=dtype, device_type=device):
+        with torch.autocast(dtype=dtype, device_type=device):
             if len(models) == 2:
                 text_encoder1, text_encoder2 = models
                 unwrapped_text_encoder2 = None
@@ -197,7 +198,15 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
             tokenizer1, tokenizer2 = sdxl_tokenize_strategy.tokenizer1, sdxl_tokenize_strategy.tokenizer2
 
             hidden_states1, hidden_states2, pool2 = self._get_hidden_states_sdxl(
-                tokens1, tokens2, tokenizer1, tokenizer2, text_encoder1, text_encoder2, unwrapped_text_encoder2, dtype = dtype, device = device,
+                tokens1, 
+                tokens2, 
+                tokenizer1, 
+                tokenizer2, 
+                text_encoder1, 
+                text_encoder2, 
+                unwrapped_text_encoder2, 
+                dtype = dtype, 
+                device = device,
             )
             return [hidden_states1, hidden_states2, pool2]
 
@@ -207,11 +216,12 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
         models: List[Any],
         tokens_list: List[torch.Tensor],
         weights_list: List[torch.Tensor],
-        dtype = None, 
+        dtype = torch.float32, 
         device = None,
     ) -> List[torch.Tensor]:
-        with torch.autocast(enabled=dtype is not None, dtype=dtype, device_type=device):
-            hidden_states1, hidden_states2, pool2 = self.encode_tokens(tokenize_strategy, models, tokens_list, dtype = dtype, device = device)
+        dtype_to_use = dtype if dtype is not None else torch.float32
+        with torch.autocast(dtype=dtype_to_use, device_type=device):
+            hidden_states1, hidden_states2, pool2 = self.encode_tokens(tokenize_strategy, models, tokens_list, dtype = dtype_to_use, device = device)
 
             weights_list = [weights.to(hidden_states1.device) for weights in weights_list]
 

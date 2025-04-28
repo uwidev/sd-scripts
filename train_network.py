@@ -577,7 +577,7 @@ class NetworkTrainer:
         dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
         total_loss = 0.0 
         with (torch.autograd.grad_mode.inference_mode(mode=True), 
-              torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device))):
+              torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device))):
             if "latents" in batch and batch["latents"] is not None:
                 latents = batch["latents"].to(device=accelerator.device)
             else:
@@ -2149,7 +2149,7 @@ class NetworkTrainer:
                                         determined_huber_schedule = "snr"
 
                                     def loss_fn(noise_pred: torch.Tensor, target: torch.Tensor, scale: float = 1.0):
-                                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                                        with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
                                             # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
                                             # To get the noise scheduler, timesteps, and latents
 
@@ -2753,7 +2753,7 @@ class NetworkTrainer:
                                         determined_huber_schedule = "snr"
 
                                     def loss_fn(noise_pred: torch.Tensor, target: torch.Tensor, scale: float = 1.0):
-                                        with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
+                                        with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
                                             # TODO: we need to get the proper huber_c here, or apply the loss_fn before we get the loss
                                             # To get the noise scheduler, timesteps, and latents
 

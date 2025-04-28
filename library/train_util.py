@@ -3123,6 +3123,7 @@ def cache_batch_text_encoder_outputs(
             text_encoders[0],
             text_encoders[1],
             dtype,
+            device = text_encoders[0].device,
         )
 
         # ここでcpuに移動しておかないと、上書きされてしまう
@@ -5823,9 +5824,10 @@ def get_hidden_states_sdxl(
     text_encoder2: CLIPTextModelWithProjection,
     weight_dtype: Optional[str] = None,
     accelerator: Optional[Accelerator] = None,
-    dtype = None,
+    dtype = torch.float32,
+    device = None,
 ):
-    with torch.autocast(enabled=dtype is not None, dtype=dtype, device_type=str(accelerator.device)):
+    with torch.autocast(dtype=dtype, device_type=str(device)):
         # input_ids: b,n,77 -> b*n, 77
         b_size = input_ids1.size()[0]
         input_ids1 = input_ids1.reshape((-1, tokenizer1.model_max_length))  # batch_size*n, 77
@@ -5876,8 +5878,8 @@ def get_hidden_states_sdxl(
 
         if weight_dtype is not None:
             # this is required for additional network training
-            hidden_states1 = hidden_states1.to(dtype=dtype if dtype is not None else weight_dtype)
-            hidden_states2 = hidden_states2.to(dtype=dtype if dtype is not None else weight_dtype)
+            hidden_states1 = hidden_states1.to(dtype=weight_dtype)
+            hidden_states2 = hidden_states2.to(dtype=weight_dtype)
 
         return hidden_states1, hidden_states2, pool2
 
