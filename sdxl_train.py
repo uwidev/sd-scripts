@@ -546,7 +546,7 @@ def train(args):
 
             text_encoder1.to(accelerator.device)
             text_encoder2.to(accelerator.device)
-            with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device))):
+            with torch.autocast(enabled=args.loss_related_use_float64, dtype=torch.float64, device_type=str(accelerator.device)):
                 train_dataset_group.new_cache_text_encoder_outputs([text_encoder1, text_encoder2], accelerator.is_main_process)
 
         accelerator.wait_for_everyone()
@@ -794,7 +794,6 @@ def train(args):
                         if (((not manual_grad_sync and accelerator.sync_gradients) 
                             or (manual_grad_sync and sync_gradients)) and args.max_grad_norm != 0.0):
                             accelerator.clip_grad_norm_(tensor, args.max_grad_norm)
-                        with 
                         optimizer.step_param(tensor, param_group)
                         tensor.grad = None
 
@@ -1694,8 +1693,6 @@ def train(args):
     if args.save_state or args.save_state_on_train_end:
         train_util.save_state_on_train_end(args, accelerator)
 
-    del accelerator  # この後メモリを使うのでこれは消す
-
     if is_main_process:
         src_path = src_stable_diffusion_ckpt if save_stable_diffusion_format else src_diffusers_model_path
         sdxl_train_util.save_sd_model_on_train_end(
@@ -1716,6 +1713,8 @@ def train(args):
         if args.edm2_loss_weighting:
             train_util.save_loss_weights_model_on_train_end(args, use_safetensors, epoch, global_step, accelerator.unwrap_model(lossweightMLP))
         logger.info("model saved.")
+
+        del accelerator  # この後メモリを使うのでこれは消す
 
 
 def setup_parser() -> argparse.ArgumentParser:
