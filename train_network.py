@@ -1065,12 +1065,17 @@ class NetworkTrainer:
                 trainable_params = results
                 lr_descriptions = None
         except TypeError as e:
-            trainable_params = network.prepare_optimizer_params(text_encoder_lr=text_encoder_lr, 
+            results = network.prepare_optimizer_params(text_encoder_lr=text_encoder_lr, 
                                                                 unet_lr=args.unet_lr, 
                                                                 learning_rate=args.learning_rate,
                                                                 apply_orthograd=apply_orthograd,
                                                                 orthograd_targets=orthograd_targets)
-            lr_descriptions = None
+            if type(results) is tuple:
+                trainable_params = results[0]
+                lr_descriptions = results[1]
+            else:
+                trainable_params = results
+                lr_descriptions = None
 
         optimizer_name, optimizer_args, optimizer = train_util.get_optimizer(args, trainable_params, optimizer_kwargs)
         optimizer_train_fn, optimizer_eval_fn = train_util.get_optimizer_train_eval_fn(optimizer, args)
