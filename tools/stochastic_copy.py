@@ -33,7 +33,7 @@ class StochasticCast(torch.autograd.Function):
         # Determine the intermediate FP32 tensor
         if source.dtype == torch.float64:
             # Clone to avoid modifying input if it requires grad and might be reused
-            fp32_input = source.clone().to(torch.float32,copy=True)
+            fp32_input = source.to(torch.float32, copy=True)
         elif source.dtype == torch.float32:
             fp32_input = source.clone()
         else:
