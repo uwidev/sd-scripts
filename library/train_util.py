@@ -5629,18 +5629,34 @@ def prepare_accelerator(args: argparse.Namespace):
 
 def prepare_dtype(args: argparse.Namespace):
     weight_dtype = torch.float32
-    if args.mixed_precision == "fp16":
+    if args.full_fp16:
+        logger.info("Full fp16 set, setting mixed precision to fp16.")
+        weight_dtype = torch.float16
+        args.mixed_precision = "fp16"
+    elif args.full_bf16:
+        logger.info("Full bf16 set, setting mixed precision to bf16.")
+        weight_dtype = torch.bfloat16
+        args.mixed_precision = "bf16"
+    elif args.mixed_precision == "fp16":
         weight_dtype = torch.float16
     elif args.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
 
     save_dtype = None
-    if args.save_precision == "fp16":
+    if args.save_precision == "float":
+        save_dtype = torch.float32
+    elif args.full_fp16 and args.save_precision == "bf16":
+        logger.warning("Full fp16 set, but bf16 save precision selected, overriding save precision to fp16.")
+        args.save_precision = "fp16"
+        save_dtype = torch.float16
+    elif args.full_bf16 and args.save_precision == "fp16":
+        logger.warning("Full bf16 set, but fp16 save precision selected, overriding save precision to bf16.")
+        args.save_precision = "bf16"
+        save_dtype = torch.bfloat16
+    elif args.save_precision == "fp16":
         save_dtype = torch.float16
     elif args.save_precision == "bf16":
         save_dtype = torch.bfloat16
-    elif args.save_precision == "float":
-        save_dtype = torch.float32
 
     return weight_dtype, save_dtype
 
