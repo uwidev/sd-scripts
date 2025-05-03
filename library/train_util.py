@@ -6792,6 +6792,42 @@ def standard_deviation_loss(
         raise ValueError(f"Unsupported reduction type: {reduction}")
     return loss
 
+def smooth_l2_log_loss(
+     predictions: torch.Tensor,
+     targets: torch.Tensor,
+     delta: float = 1.0,
+     reduction: str = 'mean',
+     eps=1e-37
+ ) -> torch.Tensor:
+    """
+    Functional version of the smooth l2->log loss.
+
+    Args:
+        predictions: Predicted values of shape (*)
+        targets: Target values of shape (*), same shape as predictions
+        delta: Transition point between L2 and logarithmic behavior
+        reduction: Reduction to apply to batch: 'none' | 'mean' | 'sum'
+        
+    Returns:
+        Loss tensor of shape () if reduction is 'mean' or 'sum',
+        or same shape as inputs if reduction is 'none'
+    """
+    r = predictions - targets
+    delta_squared = delta ** 2
+    delta_squared = delta_squared + eps
+    loss = 0.5 * delta_squared * torch.log1p(r ** 2 / delta_squared)
+
+    if reduction == "mean":
+        loss = torch.mean(loss)
+    elif reduction == "sum":
+        loss = torch.sum(loss)
+    elif reduction == "none":
+        loss = loss
+    else:
+        raise ValueError(f"Unsupported reduction type: {reduction}")
+    return loss
+ 
+
 def stable_smooth_l1_loss(predictions, targets, reduction: str = 'mean', beta=1.0, eps=1e-37):
     """
     Custom implementation of Smooth L1 Loss
@@ -6924,6 +6960,8 @@ def conditional_loss(
         loss = kornia.losses.psnr_loss(model_pred, target, 1.0).add(eps)
     elif loss_type == "geman_mcclure_loss":
         loss = kornia.losses.geman_mcclure_loss(model_pred, target).add(eps)
+    elif loss_type == "smooth_l2_log_loss":
+        loss = smooth_l2_log_loss(model_pred, target, reduction="none", delta=huber_c_reshaped, eps=eps)
     elif loss_type == "frequency_distribution":
         global fdLossModule
         if fdLossModule is None:
