@@ -6566,7 +6566,7 @@ def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_
 
 
 def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler) -> Optional[torch.Tensor]:
-    if args.loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
+    if args.loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic", "smooth_l2_log"}:
         return None
 
     if args.huber_schedule == "constant":
@@ -6587,7 +6587,7 @@ def get_huber_threshold_if_needed(args, timesteps: torch.Tensor, noise_scheduler
     return result
 
 def get_huber_threshold_if_needed_manual(loss_type, huber_c, huber_scale, huber_schedule, timesteps: torch.Tensor, noise_scheduler) -> Optional[torch.Tensor]:
-    if loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic"}:
+    if loss_type not in {"huber", "smooth_l1", "standard_pseudo_huber", "standard_huber", "standard_smooth_l1", "soft_welsch","scaled_quadratic", "smooth_l2_log"}:
         return None
 
     if huber_schedule == "constant":
@@ -6960,7 +6960,7 @@ def conditional_loss(
         loss = kornia.losses.psnr_loss(model_pred, target, 1.0).add(eps)
     elif loss_type == "geman_mcclure_loss":
         loss = kornia.losses.geman_mcclure_loss(model_pred, target).add(eps)
-    elif loss_type == "smooth_l2_log_loss":
+    elif loss_type == "smooth_l2_log":
         loss = smooth_l2_log_loss(model_pred, target, reduction="none", delta=huber_c_reshaped, eps=eps)
     elif loss_type == "frequency_distribution":
         global fdLossModule
