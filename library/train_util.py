@@ -5601,8 +5601,8 @@ def prepare_accelerator(args: argparse.Namespace):
 
     dataloader_config = DataLoaderConfiguration(non_blocking=args.pin_memory)
 
-    if args.full_bf16 and getattr(args, "stochastic_accumulation", False):
-        # Don't set gradient_accumulation_steps, as handled manually in training loop
+    if (args.full_bf16 and getattr(args, "stochastic_accumulation", None) is None or getattr(args, "stochastic_accumulation", None)):
+        # Don't set gradient_accumulation_steps, as handled manually in training loop for full bf16 with stochastic accumulation
         accelerator = Accelerator(
             mixed_precision=args.mixed_precision,
             log_with=log_with,

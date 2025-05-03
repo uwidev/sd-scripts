@@ -421,10 +421,11 @@ def train(args):
 
     # acceleratorを準備する
     logger.info("prepare accelerator")
-    accelerator = train_util.prepare_accelerator(args)
 
     # mixed precisionに対応した型を用意しておき適宜castする
     weight_dtype, save_dtype = train_util.prepare_dtype(args)
+
+    accelerator = train_util.prepare_accelerator(args)
 
     if args.no_half_vae and weight_dtype in {torch.float32, torch.bfloat16}:
         logger.warning("No half vae enabled with float or bf16. This provides no value, as float and bf16 do not face NaNs, only fp16 does. Using no half vae will use more vram, a small amount of compute overhead, and not have any tangible benefit.")

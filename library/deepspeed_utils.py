@@ -79,8 +79,8 @@ def prepare_deepspeed_plugin(args: argparse.Namespace):
         )
         exit(1)
 
-    if args.full_bf16 and getattr(args, "stochastic_accumulation", False):
-        # Don't set gradient_accumulation_steps, as handled manually in training loop for SAM
+    if (args.full_bf16 and getattr(args, "stochastic_accumulation", None) is None or getattr(args, "stochastic_accumulation", None)):
+        # Don't set gradient_accumulation_steps, as handled manually in training loop for full bf16 with stochastic accumulation
         deepspeed_plugin = DeepSpeedPlugin(
             zero_stage=args.zero_stage,
             gradient_clipping=args.max_grad_norm,
@@ -105,7 +105,8 @@ def prepare_deepspeed_plugin(args: argparse.Namespace):
         )
 
     deepspeed_plugin.deepspeed_config["train_micro_batch_size_per_gpu"] = args.train_batch_size
-    if args.full_bf16 and getattr(args, "stochastic_accumulation", False):
+    if (args.full_bf16 and getattr(args, "stochastic_accumulation", None) is None or getattr(args, "stochastic_accumulation", None)):
+        # Don't set gradient_accumulation_steps, as handled manually in training loop for full bf16 with stochastic accumulation
         deepspeed_plugin.deepspeed_config["train_batch_size"] = (
             args.train_batch_size * int(os.environ["WORLD_SIZE"])
         )
