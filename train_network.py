@@ -1025,6 +1025,11 @@ class NetworkTrainer:
             orthograd_targets = [
                 "lora_down.weight",
                 "lora_up.weight",
+                "a1.weight",
+                "a2.weight",
+                "b1.weight",
+                "b2.weight",
+                "c1.weight", 
             ]
 
         optimizer_kwargs = {}
@@ -3761,11 +3766,9 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--orthograd_targets",
         type=str,
-        default=r"['lora_down.weight','lora_up.weight']",
+        default=r"['lora_down.weight','lora_up.weight','a1.weight','a2.weight','b1.weight','b2.weight','c1.weight']",
         help="A list of strings to determine which named parameters should subject to orthgrad, based on their name containing the string."
     )
-
-
 
     # parser.add_argument("--loraplus_lr_ratio", default=None, type=float, help="LoRA+ learning rate ratio")
     # parser.add_argument("--loraplus_unet_lr_ratio", default=None, type=float, help="LoRA+ UNet learning rate ratio")
