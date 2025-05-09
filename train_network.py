@@ -783,6 +783,8 @@ class NetworkTrainer:
         deepspeed_utils.prepare_deepspeed_args(args)
         setup_logging(args, reset=True)
 
+        args.enable_norm_metrics = bool(args.enable_norm_metrics)
+
         if args.disable_cuda_reduced_precision_operations:
             torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False
             torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction=False
@@ -1847,55 +1849,60 @@ class NetworkTrainer:
         sampler_loss = 0.0
         gns = 0.0,
         variance = 0.0
-        gradient_stats = {
-                'train/grad_norm/mean': 0.0,
-                'train/grad_norm/median': 0.0,
-                'train/grad_norm/std': 0.0,
-                'train/grad_norm/min': 0.0,
-                'train/grad_norm/max': 0.0,
-                'train/grad_norm/p10': 0.0,
-                'train/grad_norm/p25': 0.0,
-                'train/grad_norm/p75': 0.0,
-                'train/grad_norm/p90': 0.0,
-                'train/grad_norm/p95': 0.0,
-                'train/grad_norm/p98': 0.0,
-                'train/grad_norm/p99': 0.0,
-                'train/grad_norm/p995': 0.0,
-                'train/grad_norm/p998': 0.0,
-                'train/grad_norm/p999': 0.0,
+
+        if args.enable_norm_metrics:
+            gradient_stats = {
+                    'train/grad_norm/mean': 0.0,
+                    'train/grad_norm/median': 0.0,
+                    'train/grad_norm/std': 0.0,
+                    'train/grad_norm/min': 0.0,
+                    'train/grad_norm/max': 0.0,
+                    'train/grad_norm/p10': 0.0,
+                    'train/grad_norm/p25': 0.0,
+                    'train/grad_norm/p75': 0.0,
+                    'train/grad_norm/p90': 0.0,
+                    'train/grad_norm/p95': 0.0,
+                    'train/grad_norm/p98': 0.0,
+                    'train/grad_norm/p99': 0.0,
+                    'train/grad_norm/p995': 0.0,
+                    'train/grad_norm/p998': 0.0,
+                    'train/grad_norm/p999': 0.0,
+                }
+            network_norm_stats = {
+                    'model/module_norm/mean': 0.0,
+                    'model/module_norm/median': 0.0,
+                    'model/module_norm/std': 0.0,
+                    'model/module_norm/min': 0.0,
+                    'model/module_norm/max': 0.0,
+                    'model/module_norm/p10': 0.0,
+                    'model/module_norm/p25': 0.0,
+                    'model/module_norm/p75': 0.0,
+                    'model/module_norm/p90': 0.0,
+                    'model/module_norm/p95': 0.0,
+                    'model/module_norm/p98': 0.0,
+                    'model/module_norm/p99': 0.0,
+                    'model/module_norm/p995': 0.0,
+                    'model/module_norm/p998': 0.0,
+                    'model/module_norm/p999': 0.0,
+                    'model/module_norm/unscaled/mean': 0.0,
+                    'model/module_norm/unscaled/median': 0.0,
+                    'model/module_norm/unscaled/std': 0.0,
+                    'model/module_norm/unscaled/min': 0.0,
+                    'model/module_norm/unscaled/max': 0.0,
+                    'model/module_norm/unscaled/p10': 0.0,
+                    'model/module_norm/unscaled/p25': 0.0,
+                    'model/module_norm/unscaled/p75': 0.0,
+                    'model/module_norm/unscaled/p90': 0.0,
+                    'model/module_norm/unscaled/p95': 0.0,
+                    'model/module_norm/unscaled/p98': 0.0,
+                    'model/module_norm/unscaled/p99': 0.0,
+                    'model/module_norm/unscaled/p995': 0.0,
+                    'model/module_norm/unscaled/p998': 0.0,
+                    'model/module_norm/unscaled/p999': 0.0,
             }
-        network_norm_stats = {
-                'model/module_norm/mean': 0.0,
-                'model/module_norm/median': 0.0,
-                'model/module_norm/std': 0.0,
-                'model/module_norm/min': 0.0,
-                'model/module_norm/max': 0.0,
-                'model/module_norm/p10': 0.0,
-                'model/module_norm/p25': 0.0,
-                'model/module_norm/p75': 0.0,
-                'model/module_norm/p90': 0.0,
-                'model/module_norm/p95': 0.0,
-                'model/module_norm/p98': 0.0,
-                'model/module_norm/p99': 0.0,
-                'model/module_norm/p995': 0.0,
-                'model/module_norm/p998': 0.0,
-                'model/module_norm/p999': 0.0,
-                'model/module_norm/unscaled/mean': 0.0,
-                'model/module_norm/unscaled/median': 0.0,
-                'model/module_norm/unscaled/std': 0.0,
-                'model/module_norm/unscaled/min': 0.0,
-                'model/module_norm/unscaled/max': 0.0,
-                'model/module_norm/unscaled/p10': 0.0,
-                'model/module_norm/unscaled/p25': 0.0,
-                'model/module_norm/unscaled/p75': 0.0,
-                'model/module_norm/unscaled/p90': 0.0,
-                'model/module_norm/unscaled/p95': 0.0,
-                'model/module_norm/unscaled/p98': 0.0,
-                'model/module_norm/unscaled/p99': 0.0,
-                'model/module_norm/unscaled/p995': 0.0,
-                'model/module_norm/unscaled/p998': 0.0,
-                'model/module_norm/unscaled/p999': 0.0,
-            }
+        else:
+            gradient_stats = None
+            network_norm_stats = None
 
         # For --sample_at_first
         if train_util.sample_images_check(args, 0, global_step) or train_util.calculate_val_loss_check(args, global_step, 0, val_dataloader, train_dataloader):
@@ -2279,8 +2286,9 @@ class NetworkTrainer:
 
                         self.all_reduce_network(accelerator, network)  # sync DDP grad manually
 
-                        params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
-                        gradient_stats = analyze_gradient_norms(params_to_analyze)
+                        if args.enable_norm_metrics:
+                            params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
+                            gradient_stats = analyze_gradient_norms(params_to_analyze)
 
                         params_to_clip = accelerator.unwrap_model(network).get_trainable_params()
                         if args.max_grad_norm != 0.0:
@@ -2292,11 +2300,12 @@ class NetworkTrainer:
 
                         unwrapped_network = accelerator.unwrap_model(network)
 
-                        """Track step count for caching"""
-                        if not hasattr(unwrapped_network, '_current_step'):
-                            unwrapped_network._current_step = 0
-                        else:
-                            unwrapped_network._current_step += 1
+                        if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_grad_norms"):
+                            """Track step count for caching"""
+                            if not hasattr(unwrapped_network, '_current_step'):
+                                unwrapped_network._current_step = 0
+                            else:
+                                unwrapped_network._current_step += 1
 
                         if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_grad_norms"):
                             unwrapped_network.update_grad_norms()
@@ -2420,7 +2429,7 @@ class NetworkTrainer:
                             mean_combined_norm = None
                             max_mean_logs = {}
 
-                        if hasattr(network, "get_norms"):
+                        if args.enable_norm_metrics and hasattr(network, "get_norms"):
                             unscaled_norms, scaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
                             network_norm_stats = analyze_model_norms(unscaled_norms, scaled_norms)
 
@@ -2840,8 +2849,10 @@ class NetworkTrainer:
 
                         if accelerator.sync_gradients:
                             self.all_reduce_network(accelerator, network)  # sync DDP grad manually
-                            params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
-                            gradient_stats = analyze_gradient_norms(params_to_analyze)
+
+                            if args.enable_norm_metrics:
+                                params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
+                                gradient_stats = analyze_gradient_norms(params_to_analyze)
 
                             params_to_clip = accelerator.unwrap_model(network).get_trainable_params()
 
@@ -2854,11 +2865,12 @@ class NetworkTrainer:
 
                             unwrapped_network = accelerator.unwrap_model(network)
 
-                            """Track step count for caching"""
-                            if not hasattr(unwrapped_network, '_current_step'):
-                                unwrapped_network._current_step = 0
-                            else:
-                                unwrapped_network._current_step += 1
+                            if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_grad_norms"):
+                                """Track step count for caching"""
+                                if not hasattr(unwrapped_network, '_current_step'):
+                                    unwrapped_network._current_step = 0
+                                else:
+                                    unwrapped_network._current_step += 1
 
                             if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_grad_norms"):
                                 unwrapped_network.update_grad_norms()
@@ -2996,7 +3008,7 @@ class NetworkTrainer:
                         mean_combined_norm = None
                         max_mean_logs = {}
 
-                    if accelerator.sync_gradients and hasattr(network, "get_norms"):
+                    if accelerator.sync_gradients and args.enable_norm_metrics and hasattr(network, "get_norms"):
                         unscaled_norms, scaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
                         network_norm_stats = analyze_model_norms(unscaled_norms, scaled_norms)
                     else:
@@ -3770,6 +3782,13 @@ def setup_parser() -> argparse.ArgumentParser:
         type=str,
         default=r"['lora_down.weight','lora_up.weight','a1.weight','a2.weight','b1.weight','b2.weight','c1.weight']",
         help="A list of strings to determine which named parameters should subject to orthgrad, based on their name containing the string."
+    )
+
+    parser.add_argument(
+        "--enable_norm_metrics",
+        type=bool,
+        default=True,
+        help="Enables calculation and collection of gradient and weight norm metrics that are for reporting via tensorboard or wandb."
     )
 
     # parser.add_argument("--loraplus_lr_ratio", default=None, type=float, help="LoRA+ learning rate ratio")
