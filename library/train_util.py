@@ -5928,11 +5928,11 @@ def get_step_ckpt_name(args: argparse.Namespace, ext: str, step_no: int):
     return STEP_FILE_NAME.format(model_name, step_no) + ext
 
 def get_last_loss_weights_ckpt_name(args: argparse.Namespace, ext: str):
-    model_name = default_if_none(args.output_name + "_edm2_loss_weights", DEFAULT_LAST_OUTPUT_NAME)
+    model_name = default_if_none(args.output_name, DEFAULT_LAST_OUTPUT_NAME) + "_edm2_loss_weights"
     return model_name + ext
 
 def get_last_timestep_sampling_ckpt_name(args: argparse.Namespace, ext: str):
-    model_name = default_if_none(args.output_name + "_timestep_sampling_weights", DEFAULT_LAST_OUTPUT_NAME)
+    model_name = default_if_none(args.output_name, DEFAULT_LAST_OUTPUT_NAME) + "_timestep_sampling_weights"
     return model_name + ext
 
 def get_last_ckpt_name(args: argparse.Namespace, ext: str):
