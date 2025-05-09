@@ -384,7 +384,7 @@ class LatentsCachingStrategy:
 
     def __init__(self, cache_to_disk: bool, batch_size: int, skip_disk_cache_validity_check: bool) -> None:
         self._cache_to_disk = cache_to_disk
-        self._batch_size = batch_size
+        self._batch_size = int(batch_size)
         self.skip_disk_cache_validity_check = skip_disk_cache_validity_check
 
     @classmethod

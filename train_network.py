@@ -1061,7 +1061,9 @@ class NetworkTrainer:
                 # only flux and sd3 atm via Kohya's
                 results = network.prepare_optimizer_params_with_multiple_te_lrs(text_encoder_lr=text_encoder_lr, 
                                                                                 unet_lr=args.unet_lr, 
-                                                                                default_lr=args.learning_rate)
+                                                                                learning_rate=args.learning_rate,
+                                                                                apply_orthograd=apply_orthograd,
+                                                                                orthograd_targets=orthograd_targets)
             else:
                 results = network.prepare_optimizer_params(text_encoder_lr=text_encoder_lr, 
                                                            unet_lr=args.unet_lr, 
