@@ -138,7 +138,7 @@ def analyze_gradient_norms(parameters):
 
 @torch.no_grad()
 def analyze_model_norms(unscaled_norms):
-    if unscaled_norms:
+    if unscaled_norms is None or unscaled_norms.numel() == 0:
         return {
                 'model/module_norm/unscaled/mean': 0.0,
                 'model/module_norm/unscaled/median': 0.0,
@@ -1816,10 +1816,10 @@ class NetworkTrainer:
                     'train/grad_norm/mean': 0.0,
                     'train/grad_norm/median': 0.0,
                     'train/grad_norm/std': 0.0,
-                    'train/grad_norm/min': 0.0,
                     'train/grad_norm/max': 0.0,
                     'train/grad_norm/p10': 0.0,
                     'train/grad_norm/p25': 0.0,
+                    'train/grad_norm/p50': 0.0,
                     'train/grad_norm/p75': 0.0,
                     'train/grad_norm/p90': 0.0,
                     'train/grad_norm/p95': 0.0,
@@ -1830,28 +1830,13 @@ class NetworkTrainer:
                     'train/grad_norm/p999': 0.0,
                 }
             network_norm_stats = {
-                    'model/module_norm/mean': 0.0,
-                    'model/module_norm/median': 0.0,
-                    'model/module_norm/std': 0.0,
-                    'model/module_norm/min': 0.0,
-                    'model/module_norm/max': 0.0,
-                    'model/module_norm/p10': 0.0,
-                    'model/module_norm/p25': 0.0,
-                    'model/module_norm/p75': 0.0,
-                    'model/module_norm/p90': 0.0,
-                    'model/module_norm/p95': 0.0,
-                    'model/module_norm/p98': 0.0,
-                    'model/module_norm/p99': 0.0,
-                    'model/module_norm/p995': 0.0,
-                    'model/module_norm/p998': 0.0,
-                    'model/module_norm/p999': 0.0,
                     'model/module_norm/unscaled/mean': 0.0,
                     'model/module_norm/unscaled/median': 0.0,
                     'model/module_norm/unscaled/std': 0.0,
-                    'model/module_norm/unscaled/min': 0.0,
                     'model/module_norm/unscaled/max': 0.0,
                     'model/module_norm/unscaled/p10': 0.0,
                     'model/module_norm/unscaled/p25': 0.0,
+                    'model/module_norm/unscaled/p50': 0.0,
                     'model/module_norm/unscaled/p75': 0.0,
                     'model/module_norm/unscaled/p90': 0.0,
                     'model/module_norm/unscaled/p95': 0.0,
