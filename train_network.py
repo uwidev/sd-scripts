@@ -103,6 +103,7 @@ def analyze_gradient_norms(parameters):
                 'train/grad_norm/max': 0.0,
                 'train/grad_norm/p10': 0.0,
                 'train/grad_norm/p25': 0.0,
+                'train/grad_norm/p50': 0.0,
                 'train/grad_norm/p75': 0.0,
                 'train/grad_norm/p90': 0.0,
                 'train/grad_norm/p95': 0.0,
@@ -1074,6 +1075,7 @@ class NetworkTrainer:
             num_workers=n_workers,
             pin_memory=args.pin_data_loader_memory or args.pin_memory,
             persistent_workers=args.persistent_data_loader_workers,
+            prefetch_factor=4,
         )
         
         if val_dataset_group is not None:
@@ -1085,6 +1087,7 @@ class NetworkTrainer:
                 num_workers=n_workers,
                 pin_memory=args.pin_data_loader_memory or args.pin_memory,
                 persistent_workers=args.persistent_data_loader_workers,
+                prefetch_factor=4,
             )
 
         # 学習ステップ数を計算する
@@ -2232,11 +2235,13 @@ class NetworkTrainer:
 
                         self.all_reduce_network(accelerator, network)  # sync DDP grad manually
 
+                        unwrapped_network = accelerator.unwrap_model(network)
+
                         if args.enable_norm_metrics:
-                            params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
+                            params_to_analyze = unwrapped_network.get_trainable_params()
                             gradient_stats = analyze_gradient_norms(params_to_analyze)
 
-                        params_to_clip = accelerator.unwrap_model(network).get_trainable_params()
+                        params_to_clip = unwrapped_network.get_trainable_params()
                         if args.max_grad_norm != 0.0:
                             grad_norm = accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm).item()
                             grad_norm_clipped = min(grad_norm, args.max_grad_norm)
@@ -2244,7 +2249,7 @@ class NetworkTrainer:
                             grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
                             grad_norm_clipped = grad_norm
 
-                        unwrapped_network = accelerator.unwrap_model(network)
+
 
                         if getattr(unwrapped_network, "ggpo_sigma", None) and hasattr(unwrapped_network, "update_grad_norms"):
                             """Track step count for caching"""
@@ -2794,7 +2799,7 @@ class NetworkTrainer:
                         loss = pre_scaling_loss
 
                         if accelerator.sync_gradients:
-                            self.all_reduce_network(accelerator, network)  # sync DDP grad manually
+                            #self.all_reduce_network(accelerator, network)  # sync DDP grad manually
 
                             if args.enable_norm_metrics:
                                 params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
@@ -2852,7 +2857,7 @@ class NetworkTrainer:
 
                         if args.edm2_loss_weighting:
                             if accelerator.sync_gradients:
-                                self.all_reduce_network(accelerator, lossweightMLP)  # sync DDP grad manually
+                                #self.all_reduce_network(accelerator, lossweightMLP)  # sync DDP grad manually
                                 params_to_clip = accelerator.unwrap_model(lossweightMLP).get_trainable_params()
                                 edm2_loss_weighting_max_grad_norm = float(args.edm2_loss_weighting_max_grad_norm) if args.edm2_loss_weighting_max_grad_norm is not None else 1.0
                                 if edm2_loss_weighting_max_grad_norm != 0.0:
