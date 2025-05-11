@@ -745,7 +745,8 @@ class NetworkTrainer:
         deepspeed_utils.prepare_deepspeed_args(args)
         setup_logging(args, reset=True)
 
-        args.enable_norm_metrics = bool(args.enable_norm_metrics)
+        args.enable_norm_metrics = (args.enable_norm_metrics if isinstance(args.enable_norm_metrics, bool) else 
+        (isinstance(args.enable_norm_metrics, str) and args.enable_norm_metrics.strip().lower() == "true"))
 
         if args.disable_cuda_reduced_precision_operations:
             torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False
