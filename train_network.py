@@ -745,9 +745,6 @@ class NetworkTrainer:
         deepspeed_utils.prepare_deepspeed_args(args)
         setup_logging(args, reset=True)
 
-        args.enable_norm_metrics = (args.enable_norm_metrics if isinstance(args.enable_norm_metrics, bool) else 
-        (isinstance(args.enable_norm_metrics, str) and args.enable_norm_metrics.strip().lower() == "true"))
-
         if args.disable_cuda_reduced_precision_operations:
             torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False
             torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction=False
@@ -1815,7 +1812,7 @@ class NetworkTrainer:
         gns = 0.0,
         variance = 0.0
 
-        if args.enable_norm_metrics:
+        if not args.disable_norm_metrics:
             gradient_stats = {
                     'train/grad_norm/mean': 0.0,
                     'train/grad_norm/median': 0.0,
@@ -2238,7 +2235,7 @@ class NetworkTrainer:
 
                         unwrapped_network = accelerator.unwrap_model(network)
 
-                        if args.enable_norm_metrics:
+                        if not args.disable_norm_metrics:
                             params_to_analyze = unwrapped_network.get_trainable_params()
                             gradient_stats = analyze_gradient_norms(params_to_analyze)
 
@@ -2381,7 +2378,7 @@ class NetworkTrainer:
                             mean_combined_norm = None
                             max_mean_logs = {}
 
-                        if args.enable_norm_metrics and hasattr(network, "get_norms"):
+                        if not args.disable_norm_metrics and hasattr(network, "get_norms"):
                             unscaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
                             network_norm_stats = analyze_model_norms(unscaled_norms)
 
@@ -2802,7 +2799,7 @@ class NetworkTrainer:
                         if accelerator.sync_gradients:
                             #self.all_reduce_network(accelerator, network)  # sync DDP grad manually
 
-                            if args.enable_norm_metrics:
+                            if not args.disable_norm_metrics:
                                 params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
                                 gradient_stats = analyze_gradient_norms(params_to_analyze)
 
@@ -2960,7 +2957,7 @@ class NetworkTrainer:
                         mean_combined_norm = None
                         max_mean_logs = {}
 
-                    if accelerator.sync_gradients and args.enable_norm_metrics and hasattr(network, "get_norms"):
+                    if accelerator.sync_gradients and not args.disable_norm_metrics and hasattr(network, "get_norms"):
                         unscaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
                         network_norm_stats = analyze_model_norms(unscaled_norms)
                     else:
@@ -3737,10 +3734,9 @@ def setup_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--enable_norm_metrics",
-        type=bool,
-        default=True,
-        help="Enables calculation and collection of gradient and weight norm metrics that are for reporting via tensorboard or wandb."
+        "--disable_norm_metrics",
+        action="store_true",
+        help="Disables calculation and collection of gradient and weight norm metrics that are for reporting via tensorboard or wandb."
     )
 
     # parser.add_argument("--loraplus_lr_ratio", default=None, type=float, help="LoRA+ learning rate ratio")
