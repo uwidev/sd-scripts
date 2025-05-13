@@ -621,8 +621,8 @@ class WaveletTransform:
 
         # Create filters from wavelet
         wav = pywt.Wavelet(wavelet)
-        self.dec_lo = torch.tensor(wav.dec_lo).to(device=device, dtype=dtype)
-        self.dec_hi = torch.tensor(wav.dec_hi).to(device=device, dtype=dtype)
+        self.dec_lo = torch.tensor(wav.dec_lo, device=device, dtype=dtype)
+        self.dec_hi = torch.tensor(wav.dec_hi, device=device, dtype=dtype)
         self.device = device
         self.dtype = dtype
 
@@ -703,9 +703,9 @@ class DiscreteWaveletTransform(WaveletTransform):
 class StationaryWaveletTransform(WaveletTransform):
     """Stationary Wavelet Transform (SWT) implementation."""
 
-    def __init__(self, wavelet="db4", device=torch.device("cpu")):
+    def __init__(self, wavelet="db4", device=torch.device("cpu"), dtype=torch.float32):
         """Initialize wavelet filters."""
-        super().__init__(wavelet, device)
+        super().__init__(wavelet, device, dtype)
 
         # Store original filters
         self.orig_dec_lo = self.dec_lo.clone()
@@ -768,8 +768,8 @@ class StationaryWaveletTransform(WaveletTransform):
         zeros = 2**level - 1
 
         # Create upsampled filters
-        upsampled_dec_lo = torch.zeros(len(self.orig_dec_lo) + (len(self.orig_dec_lo) - 1) * zeros, device=self.orig_dec_lo.device)
-        upsampled_dec_hi = torch.zeros(len(self.orig_dec_hi) + (len(self.orig_dec_hi) - 1) * zeros, device=self.orig_dec_hi.device)
+        upsampled_dec_lo = torch.zeros(len(self.orig_dec_lo) + (len(self.orig_dec_lo) - 1) * zeros, device=self.orig_dec_lo.device, dtype=self.orig_dec_lo.dtype)
+        upsampled_dec_hi = torch.zeros(len(self.orig_dec_hi) + (len(self.orig_dec_hi) - 1) * zeros, device=self.orig_dec_hi.device, dtype=self.orig_dec_hi.dtype)
 
         # Insert original coefficients with zeros in between
         upsampled_dec_lo[:: zeros + 1] = self.orig_dec_lo
@@ -782,10 +782,10 @@ class StationaryWaveletTransform(WaveletTransform):
         batch, channels, height, width = x.shape
 
         # Prepare output tensors
-        ll = torch.zeros((batch, channels, height, width), device=x.device)
-        lh = torch.zeros((batch, channels, height, width), device=x.device)
-        hl = torch.zeros((batch, channels, height, width), device=x.device)
-        hh = torch.zeros((batch, channels, height, width), device=x.device)
+        ll = torch.zeros((batch, channels, height, width), device=self.device, dtype=self.dtype)
+        lh = torch.zeros((batch, channels, height, width), device=self.device, dtype=self.dtype)
+        hl = torch.zeros((batch, channels, height, width), device=self.device, dtype=self.dtype)
+        hh = torch.zeros((batch, channels, height, width), device=self.device, dtype=self.dtype)
 
         # Prepare 1D filter kernels
         dec_lo_1d = dec_lo.view(1, 1, -1)
@@ -836,23 +836,23 @@ class QuaternionWaveletTransform(WaveletTransform):
     Combines real DWT with three Hilbert transforms along x, y, and xy axes.
     """
 
-    def __init__(self, wavelet="db4", device=torch.device("cpu")):
+    def __init__(self, wavelet="db4", device=torch.device("cpu"), dtype=torch.float32):
         """Initialize wavelet filters and Hilbert transforms."""
-        super().__init__(wavelet, device)
+        super().__init__(wavelet, device, dtype)
 
         # Register Hilbert transform filters
-        self.register_hilbert_filters(device)
+        self.register_hilbert_filters(device, dtype)
 
-    def register_hilbert_filters(self, device):
+    def register_hilbert_filters(self, device, dtype):
         """Create and register Hilbert transform filters."""
         # Create x-axis Hilbert filter
-        self.hilbert_x = self._create_hilbert_filter("x").to(device)
+        self.hilbert_x = self._create_hilbert_filter("x").to(device=device, dtype=dtype)
 
         # Create y-axis Hilbert filter
-        self.hilbert_y = self._create_hilbert_filter("y").to(device)
+        self.hilbert_y = self._create_hilbert_filter("y").to(device=device, dtype=dtype)
 
         # Create xy (diagonal) Hilbert filter
-        self.hilbert_xy = self._create_hilbert_filter("xy").to(device)
+        self.hilbert_xy = self._create_hilbert_filter("xy").to(device=device, dtype=dtype)
 
     def _create_hilbert_filter(self, direction):
         """Create a Hilbert transform filter for the specified direction."""
@@ -862,8 +862,8 @@ class QuaternionWaveletTransform(WaveletTransform):
                 [
                     [-0.0106, -0.0329, -0.0308, 0.0000, 0.0308, 0.0329, 0.0106],
                     [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000],
-                ]
-            ).float()
+                ],
+            device=self.device, dtype=self.dtype)
             return filt.unsqueeze(0).unsqueeze(0)
 
         elif direction == "y":
@@ -877,8 +877,8 @@ class QuaternionWaveletTransform(WaveletTransform):
                     [0.0308, 0.0000],
                     [0.0329, 0.0000],
                     [0.0106, 0.0000],
-                ]
-            ).float()
+                ],
+            device=self.device, dtype=self.dtype)
             return filt.unsqueeze(0).unsqueeze(0)
 
         else:  # 'xy' - diagonal
@@ -892,8 +892,8 @@ class QuaternionWaveletTransform(WaveletTransform):
                     [0.0033, 0.0102, 0.0095, 0.0000, -0.0095, -0.0102, -0.0033],
                     [0.0035, 0.0108, 0.0102, 0.0000, -0.0102, -0.0108, -0.0035],
                     [0.0011, 0.0035, 0.0033, 0.0000, -0.0033, -0.0035, -0.0011],
-                ]
-            ).float()
+                ],
+            device=self.device, dtype=self.dtype)
             return filt.unsqueeze(0).unsqueeze(0)
 
     def _apply_hilbert(self, x, direction):
@@ -1094,11 +1094,11 @@ class WaveletLoss(nn.Module):
 
         # Initialize transform based on type
         if transform_type == "dwt":
-            self.transform = DiscreteWaveletTransform(wavelet, device)
+            self.transform = DiscreteWaveletTransform(wavelet, device=device, dtype=dtype)
         elif transform_type == "swt":  # swt
-            self.transform = StationaryWaveletTransform(wavelet, device)
+            self.transform = StationaryWaveletTransform(wavelet, device=device, dtype=dtype)
         elif transform_type == "qwt":
-            self.transform = QuaternionWaveletTransform(wavelet, device)
+            self.transform = QuaternionWaveletTransform(wavelet, device=device, dtype=dtype)
 
             # Register Hilbert filters as buffers
             self.register_buffer("hilbert_x", self.transform.hilbert_x.to(device=device, dtype=dtype))
@@ -1145,8 +1145,6 @@ class WaveletLoss(nn.Module):
 
         # Calculate weighted loss
         loss = torch.tensor(0.0, device=pred.device, dtype=self.dtype)
-        combined_hf_pred = []
-        combined_hf_target = []
 
         for i in range(1, self.level + 1):
             # Skip LL bands except for ones at or beyond the threshold
@@ -1161,6 +1159,8 @@ class WaveletLoss(nn.Module):
                     band_loss = self.band_level_weights.get(weight_key, self.band_weights["ll"]) * self.loss_fn(
                         pred_stack, target_stack
                     )
+
+                    band_loss = band_loss.mean()
                     loss += band_loss
 
             # High frequency bands
@@ -1173,24 +1173,11 @@ class WaveletLoss(nn.Module):
                     band_loss = self.band_level_weights.get(weight_key, self.band_weights[band]) * self.loss_fn(
                         pred_stack, target_stack
                     )
+                    band_loss = band_loss.mean()
+
                     loss += band_loss
 
-                    # Collect high frequency bands for visualization
-                    combined_hf_pred.append(pred_coeffs[band][i - 1])
-                    combined_hf_target.append(target_coeffs[band][i - 1])
-
-        # Combine high frequency bands for visualization
-        if combined_hf_pred and combined_hf_target:
-            combined_hf_pred = self._pad_tensors(combined_hf_pred)
-            combined_hf_target = self._pad_tensors(combined_hf_target)
-
-            combined_hf_pred = torch.cat(combined_hf_pred, dim=1)
-            combined_hf_target = torch.cat(combined_hf_target, dim=1)
-        else:
-            combined_hf_pred = None
-            combined_hf_target = None
-
-        return loss, {"combined_hf_pred": combined_hf_pred, "combined_hf_target": combined_hf_target}
+        return loss
 
     def quaternion_forward(self, pred: Tensor, target: Tensor) -> tuple[Tensor, Mapping[str, Tensor | None]]:
         """

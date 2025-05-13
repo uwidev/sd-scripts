@@ -2145,7 +2145,7 @@ class NetworkTrainer:
 
                                 self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args, accelerator))
 
-                                wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(noise_pred, target)
+                                wav_loss = self.wavelet_loss(noise_pred, target)
                                 # Weight the losses as needed
                                 #loss = loss + args.wavelet_loss_alpha * wav_loss
 
@@ -2753,7 +2753,7 @@ class NetworkTrainer:
 
                                 self.wavelet_loss.set_loss_fn(wavelet_loss_fn(args, accelerator))
 
-                                wav_loss, pred_combined_hf, target_combined_hf = self.wavelet_loss(noise_pred, target)
+                                wav_loss = self.wavelet_loss(noise_pred, target)
                                 # Weight the losses as needed
                                 #loss = loss + args.wavelet_loss_alpha * wav_loss
 
