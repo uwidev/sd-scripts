@@ -1706,7 +1706,7 @@ class NetworkTrainer:
                 args.wavelet_loss_band_weights = ast.literal_eval(args.wavelet_loss_band_weights)
 
             if args.wavelet_loss_quaternion_component_weights:
-                args.wavelet_loss_quaternion_component_weights = ast.literal_eval(args.wavelet_loss_quaternion_component_weights),
+                args.wavelet_loss_quaternion_component_weights = ast.literal_eval(args.wavelet_loss_quaternion_component_weights)
 
 
             self.wavelet_loss = WaveletLoss(

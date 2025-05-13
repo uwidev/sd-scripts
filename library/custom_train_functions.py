@@ -1194,9 +1194,9 @@ class WaveletLoss(nn.Module):
         target_qwt = self.transform.decompose(target, self.level)
 
         # Initialize total loss and component losses
-        total_loss = torch.tensor(0.0, device=pred.device)
+        total_loss = torch.tensor(0.0, device=pred.device, dtype=self.dtype)
         component_losses = {
-            f"{component}_{band}": torch.tensor(0.0, device=pred.device)
+            f"{component}_{band}": torch.tensor(0.0, device=pred.device, dtype=self.dtype)
             for component in ["r", "i", "j", "k"]
             for band in ["ll", "lh", "hl", "hh"]
         }
