@@ -1195,11 +1195,6 @@ class WaveletLoss(nn.Module):
 
         # Initialize total loss and component losses
         total_loss = torch.tensor(0.0, device=pred.device, dtype=self.dtype)
-        component_losses = {
-            f"{component}_{band}": torch.tensor(0.0, device=pred.device, dtype=self.dtype)
-            for component in ["r", "i", "j", "k"]
-            for band in ["ll", "lh", "hl", "hh"]
-        }
 
         # Calculate loss for each quaternion component, band and level
         for component in ["r", "i", "j", "k"]:
@@ -1222,6 +1217,7 @@ class WaveletLoss(nn.Module):
 
                     # Calculate loss
                     level_loss = self.loss_fn(pred_coeff, target_coeff)
+                    level_loss = level_loss.mean()
 
                     # Apply weights
                     weighted_loss = component_weight * level_weight * level_loss
@@ -1229,10 +1225,7 @@ class WaveletLoss(nn.Module):
                     # Add to total loss
                     total_loss += weighted_loss
 
-                    # Add to component loss
-                    component_losses[f"{component}_{band}"] += weighted_loss
-
-        return total_loss, component_losses
+        return total_loss
 
     def _pad_tensors(self, tensors: list[Tensor]) -> list[Tensor]:
         """Pad tensors to match the largest size."""
