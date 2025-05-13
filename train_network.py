@@ -1366,6 +1366,7 @@ class NetworkTrainer:
             "ss_wavelet_loss_level": args.wavelet_loss_level,
             "ss_wavelet_loss_band_weights": json.dumps(args.wavelet_loss_band_weights) if args.wavelet_loss_band_weights is not None else None,
             "ss_wavelet_loss_band_level_weights": json.dumps(args.wavelet_loss_band_level_weights) if args.wavelet_loss_band_weights is not None else None,
+            "ss_wavelet_loss_quaternion_component_weights": json.dumps(args.wavelet_loss_quaternion_component_weights) if args.wavelet_loss_quaternion_component_weights is not None else None,
             "ss_wavelet_loss_ll_level_threshold": args.wavelet_loss_ll_level_threshold,
         }
             #"ss_wavelet_loss_rectified_flow": args.wavelet_loss_rectified_flow,
@@ -1704,12 +1705,17 @@ class NetworkTrainer:
             if args.wavelet_loss_band_weights:
                 args.wavelet_loss_band_weights = ast.literal_eval(args.wavelet_loss_band_weights)
 
+            if args.wavelet_loss_quaternion_component_weights:
+                args.wavelet_loss_quaternion_component_weights = ast.literal_eval(args.wavelet_loss_quaternion_component_weights),
+
 
             self.wavelet_loss = WaveletLoss(
+                transform_type=args.wavelet_loss_transform,
                 wavelet=args.wavelet_loss_wavelet, 
                 level=int(args.wavelet_loss_level), 
-                band_level_weights=args.wavelet_loss_band_level_weights, 
                 band_weights=args.wavelet_loss_band_weights, 
+                band_level_weights=args.wavelet_loss_band_level_weights, 
+                quaternion_component_weights=args.wavelet_loss_quaternion_component_weights,
                 ll_level_threshold=int(args.wavelet_loss_ll_level_threshold) if args.wavelet_loss_ll_level_threshold is not None else None, 
                 device=accelerator.device,
                 dtype=torch.float64 if args.loss_related_use_float64 else torch.float32
@@ -1731,6 +1737,8 @@ class NetworkTrainer:
                 logger.info(f"\tBand weights: {args.wavelet_loss_band_weights}")
             if args.wavelet_loss_band_level_weights is not None:
                 logger.info(f"\tBand level weights: {args.wavelet_loss_band_level_weights}")
+            if args.wavelet_loss_quaternion_component_weights is not None:
+                logger.info(f"\tQuaternion component weights: {args.wavelet_loss_quaternion_component_weights}")
 
         if accelerator.is_main_process:
             init_kwargs = {}
