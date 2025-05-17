@@ -37,8 +37,8 @@ import matplotlib
 matplotlib.use('Agg')  # Set the backend to 'Agg', non-interactive backend
 import matplotlib.pyplot as plt
 plt.ioff() # Explicitly turn off interactive mode
-from tools.focal_frequency_loss import FocalFrequencyLoss
-from tools.fdl_loss_gemini_refined import FDLossLatent, ChannelMixerExtractor, ShallowConvExtractor, MultiScaleConvExtractor
+from library.focal_frequency_loss import FocalFrequencyLoss
+from library.fdl_loss_gemini_refined import FDLossLatent, ChannelMixerExtractor, ShallowConvExtractor, MultiScaleConvExtractor
 
 import kornia
 
@@ -6380,7 +6380,7 @@ def immiscible_diffusion(args, noise_scheduler, latents, noise, timesteps):
     x_t_b = sqrt_alpha_t * latents + sqrt_one_minus_alpha_t * noise
     return x_t_b
 
-def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps=None, train=True, timestep_sampler=None, batch=None):
+def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps=None, train=True, batch=None):
     # always define min_timestep and max_timestep up-front
     min_timestep = 0 if args.min_timestep is None else args.min_timestep
     max_timestep = noise_scheduler.config.num_train_timesteps if args.max_timestep is None else args.max_timestep
@@ -6418,9 +6418,6 @@ def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_
             num_samples=b_size,
             replacement=False
         ).to(dtype=torch.long, device=latents.device)
-    elif train and timestep_sampler:
-        timesteps = timestep_sampler.sample_timestep(batch["images"], noise_scheduler.num_train_timesteps)
-        timesteps = timesteps.to(dtype=torch.long, device=latents.device)
     elif train and args.timestep_sampling != "uniform":
         shift = args.discrete_flow_shift
         logits_norm = torch.randn(b_size,  device="cpu")

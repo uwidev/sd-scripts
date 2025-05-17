@@ -316,7 +316,6 @@ class Sd3NetworkTrainer(train_network.NetworkTrainer):
         train_unet,
         fixed_timesteps=None,
         train=True,
-        timestep_sampler=None,
     ):
         # Sample noise that we'll add to the latents
         noise = torch.randn_like(latents)

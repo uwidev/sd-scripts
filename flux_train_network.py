@@ -352,7 +352,6 @@ class FluxNetworkTrainer(train_network.NetworkTrainer):
         train_unet,
         fixed_timesteps=None,
         train=True,
-        timestep_sampler=None,
 ):      
         dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
         with torch.autocast(dtype=dtype_to_use, device_type=str(accelerator.device)):
