@@ -218,11 +218,11 @@ def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted
                         help="For loss types that are schedulable.")
     parser.add_argument("--wavelet_loss_transform", default="swt", help="Wavelet transform type of DWT, SWT, QWT. Default: swt")
     parser.add_argument("--wavelet_loss_wavelet", default="sym7", help="Wavelet. Default: sym7")
-    parser.add_argument("--wavelet_loss_level", type=int, default=2, help="Wavelet loss level 1 (main), 2 (details), or 3. Higher levels are available for DWT for higher resolution training. Default: 3")
+    parser.add_argument("--wavelet_loss_level", type=int, default=2, help="Wavelet loss level 1 (main), 2 (details), or 3. Higher levels are available for DWT for higher resolution training. Default: 2")
     #parser.add_argument("--wavelet_loss_rectified_flow", default=True, help="Use rectified flow to estimate clean latents before wavelet loss")
     parser.add_argument("--wavelet_loss_band_level_weights", type=str, default=r"{'ll1': 0.1, 'lh1': 0.01, 'hl1': 0.01, 'hh1': 0.05, 'll2': 0.1, 'lh2': 0.01, 'hl2': 0.01, 'hh2': 0.05}", help="Wavelet loss band level weights.")
     parser.add_argument("--wavelet_loss_band_weights", type=str, default=r"{ 'll': 0.1, 'lh': 0.01, 'hl': 0.01, 'hh': 0.05}", help="Wavelet loss band weights.")
-    parser.add_argument("--wavelet_loss_ll_level_threshold", default=-1, help="Wavelet loss which level to calculate the loss for the low frequency (ll). -1 means last n level. Default: -1")
+    parser.add_argument("--wavelet_loss_ll_level_threshold", default=None, help="Wavelet loss which level to calculate the loss for the low frequency (ll). -1 means last n level. Default: None")
     parser.add_argument(
         "--wavelet_loss_quaternion_component_weights",
         type=str,
