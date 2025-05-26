@@ -1,9 +1,8 @@
 #torch==2.7.0 --index-url https://download.pytorch.org/whl/cu128
 #torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
-accelerate==1.6.0
+accelerate==1.7.0
 transformers==4.50.3
 diffusers==0.33.1
-ftfy==6.3.1
 opencv-python==4.11.0.86
 einops==0.8.1
 pytorch-lightning==2.5.0.post0
@@ -13,9 +12,6 @@ lion-pytorch==0.2.3
 schedulefree==1.4.1
 tensorboard==2.19.0
 safetensors==0.5.3
-altair==5.5.0
-narwhals==1.39.1
-easygui==0.98.3
 toml==0.10.2
 voluptuous==0.15.2
 huggingface-hub[hf_xet]==0.30.2
@@ -34,7 +30,7 @@ cmake==4.0.2
 setuptools==80.7.1
 triton==3.3.0; platform_system == "Linux"
 triton-windows==3.3.0.post19; platform_system == "Windows"
-prodigy-plus-schedule-free==1.9.1
+prodigy-plus-schedule-free==1.9.2
 kornia==0.8.0
 xformers==v0.0.30 --index-url https://download.pytorch.org/whl/cu128
 PyWavelets==1.8.0

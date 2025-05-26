@@ -24,6 +24,7 @@ from typing import (
     Union
 )
 from accelerate import Accelerator, InitProcessGroupKwargs, DistributedDataParallelKwargs, PartialState, DataLoaderConfiguration
+from accelerate.utils import TorchDynamoPlugin
 import glob
 import math
 import os
@@ -5575,9 +5576,17 @@ def prepare_accelerator(args: argparse.Namespace):
                 wandb.login(key=args.wandb_api_key)
 
     # torch.compile のオプション。 NO の場合は torch.compile は使わない
-    dynamo_backend = "NO"
     if args.torch_compile:
-        dynamo_backend = args.dynamo_backend
+        # Configure the compilation backend
+        dynamo_plugin = TorchDynamoPlugin(
+            backend="inductor",  # Options: "inductor", "aot_eager", "aot_nvfuser", etc.
+            mode="default",      # Options: "default", "reduce-overhead", "max-autotune"
+            fullgraph=False,
+            dynamic=True,
+            use_regional_compilation=True,
+        )
+    else:
+        dynamo_plugin = None
 
     #(
     #    InitProcessGroupKwargs(
@@ -5612,7 +5621,7 @@ def prepare_accelerator(args: argparse.Namespace):
             log_with=log_with,
             project_dir=logging_dir,
             kwargs_handlers=kwargs_handlers,
-            dynamo_backend=dynamo_backend,
+            dynamo_plugin=dynamo_plugin,
             deepspeed_plugin=deepspeed_plugin,
             dataloader_config=dataloader_config,
         )
@@ -5623,7 +5632,7 @@ def prepare_accelerator(args: argparse.Namespace):
             log_with=log_with,
             project_dir=logging_dir,
             kwargs_handlers=kwargs_handlers,
-            dynamo_backend=dynamo_backend,
+            dynamo_plugin=dynamo_plugin,
             deepspeed_plugin=deepspeed_plugin,
             dataloader_config=dataloader_config,
         )
