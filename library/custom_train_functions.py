@@ -220,7 +220,7 @@ def add_custom_train_arguments(parser: argparse.ArgumentParser, support_weighted
     parser.add_argument("--wavelet_loss_wavelet", default="sym7", help="Wavelet. Default: sym7")
     parser.add_argument("--wavelet_loss_level", type=int, default=2, help="Wavelet loss level 1 (main), 2 (details), or 3. Higher levels are available for DWT for higher resolution training. Default: 2")
     #parser.add_argument("--wavelet_loss_rectified_flow", default=True, help="Use rectified flow to estimate clean latents before wavelet loss")
-    parser.add_argument("--wavelet_loss_band_level_weights", type=str, default=r"{'ll1': 0.1, 'lh1': 0.01, 'hl1': 0.01, 'hh1': 0.05, 'll2': 0.1, 'lh2': 0.01, 'hl2': 0.01, 'hh2': 0.05}", help="Wavelet loss band level weights.")
+    parser.add_argument("--wavelet_loss_band_level_weights", type=str, default=None, help="Wavelet loss band level weights, uses band weights if not defined for a given level. Input example: {'ll1': 0.1, 'lh1': 0.01, 'hl1': 0.01, 'hh1': 0.05, 'll2': 0.1, 'lh2': 0.01, 'hl2': 0.01, 'hh2': 0.05} E.x. Default: none.")
     parser.add_argument("--wavelet_loss_band_weights", type=str, default=r"{ 'll': 0.1, 'lh': 0.01, 'hl': 0.01, 'hh': 0.05}", help="Wavelet loss band weights.")
     parser.add_argument("--wavelet_loss_ll_level_threshold", default=None, help="Wavelet loss which level to calculate the loss for the low frequency (ll). -1 means last n level. Default: None")
     parser.add_argument(
@@ -1075,16 +1075,7 @@ class WaveletLoss(nn.Module):
 
         # Default weights from paper:
         # "Training Generative Image Super-Resolution Models by Wavelet-Domain Losses"
-        self.band_level_weights = band_level_weights or {
-            "ll1": 0.1,
-            "lh1": 0.01,
-            "hl1": 0.01,
-            "hh1": 0.05,
-            "ll2": 0.1,
-            "lh2": 0.01,
-            "hl2": 0.01,
-            "hh2": 0.05,
-        }
+        self.band_level_weights = band_level_weights or {}
        
         self.band_weights = band_weights or {"ll": 0.1, "lh": 0.01, "hl": 0.01, "hh": 0.05}
 
