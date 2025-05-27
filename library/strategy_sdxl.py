@@ -119,8 +119,7 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
         dtype = torch.float32,
         device = None,
     ):
-        dtype_to_use = dtype if dtype is not None else torch.float32
-        with torch.autocast(dtype=dtype_to_use, device_type=device):
+        with torch.autocast(dtype=torch.float32, device_type=device):
             # input_ids: b,n,77 -> b*n, 77
             b_size = input_ids1.size()[0]
             if input_ids1.size()[1] == 1:
@@ -129,8 +128,8 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
                 max_token_length = input_ids1.size()[1] * input_ids1.size()[2]
             input_ids1 = input_ids1.reshape((-1, tokenizer1.model_max_length))  # batch_size*n, 77
             input_ids2 = input_ids2.reshape((-1, tokenizer2.model_max_length))  # batch_size*n, 77
-            input_ids1 = input_ids1.to(text_encoder1.device)
-            input_ids2 = input_ids2.to(text_encoder2.device)
+            input_ids1 = input_ids1.to(device=text_encoder1.device)
+            input_ids2 = input_ids2.to(device=text_encoder2.device)
 
             # text_encoder1
             enc_out = text_encoder1(input_ids1, output_hidden_states=True, return_dict=True)
