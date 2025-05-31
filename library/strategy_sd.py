@@ -159,7 +159,11 @@ class SdSdxlLatentsCachingStrategy(LatentsCachingStrategy):
         return os.path.splitext(absolute_path)[0] + f"_{image_size[0]:04d}x{image_size[1]:04d}" + self.suffix
 
     def is_disk_cached_latents_expected(self, bucket_reso: Tuple[int, int], npz_path: str, flip_aug: bool, alpha_mask: bool):
-        return self._default_is_disk_cached_latents_expected(8, bucket_reso, npz_path, flip_aug, alpha_mask)
+        # FOR SD/SDXL latents, the keys INSIDE the npz always have a resolution suffix.
+        # So, we pass multi_resolution=True to the default checker.
+        return self._default_is_disk_cached_latents_expected(
+            8, bucket_reso, npz_path, flip_aug, alpha_mask, multi_resolution=True
+        )
 
     # TODO remove circular dependency for ImageInfo
     def cache_batch_latents(self, vae, image_infos: List, flip_aug: bool, alpha_mask: bool, random_crop: bool, random_crop_padding_percent: float = 0.05):
