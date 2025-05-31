@@ -15,6 +15,8 @@ import numpy as np
 import tools.edm2_loss as edm2_loss
 import ast
 import copy
+import inspect
+import types
 
 from tqdm import tqdm
 
@@ -1001,7 +1003,35 @@ class NetworkTrainer:
 
                 optimizer_kwargs[key] = value
 
-        apply_orthograd = any(optimizer_kwargs.get(key, False) for key in ['use_orthograd', 'orthograd'])
+        try:
+            # Check optimizer defaults
+            case_sensitive_optimizer_type = args.optimizer_type  # not lower
+
+            if "." not in case_sensitive_optimizer_type:  # from torch.optim
+                optimizer_module = torch.optim
+            else:  # from other library
+                values = case_sensitive_optimizer_type.split(".")
+                optimizer_module = importlib.import_module(".".join(values[:-1]))
+                case_sensitive_optimizer_type = values[-1]
+
+            # Need to handle base optimizer
+            if case_sensitive_optimizer_type.lower() == "schedulefreewrapper":
+                case_sensitive_full_base_optimizer_name = optimizer_kwargs.get("base_optimizer_type", None)
+                base_optimizer_values = case_sensitive_full_base_optimizer_name.split(".")
+                base_optimizer_module = importlib.import_module(".".join(base_optimizer_values[:-1]))
+                case_sensitive_base_optimizer_type = base_optimizer_values[-1]
+                optimizer_class = getattr(base_optimizer_module, case_sensitive_base_optimizer_type)
+            else:
+                optimizer_class = getattr(optimizer_module, case_sensitive_optimizer_type)
+            
+            sig = inspect.signature(optimizer_class.__init__)
+
+            optimizer_init_sig_parameters = sig.parameters
+        except Exception as e:
+            logger.warning(f"Encountered an error while trying to determine default orthograd from optimizer init signature. {e}")
+            optimizer_init_sig_parameters = {}
+
+        apply_orthograd = any(optimizer_kwargs.get(key, getattr(optimizer_init_sig_parameters.get(key, types.SimpleNamespace()), "default", False)) == True for key in ['use_orthograd', 'orthograd'])
 
         # make backward compatibility for text_encoder_lr
         support_multiple_lrs = hasattr(network, "prepare_optimizer_params_with_multiple_te_lrs")
