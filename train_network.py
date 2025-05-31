@@ -734,11 +734,19 @@ class NetworkTrainer:
         setup_logging(args, reset=True)
 
         if args.disable_cuda_reduced_precision_operations:
+            torch.set_float32_matmul_precision("highest")
             torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False
             torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction=False
             torch.backends.cuda.matmul.allow_tf32=False
             torch.backends.cudnn.allow_tf32=False
             torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(False)
+        elif args.enable_cuda_reduced_precision_operations:
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=True
+            torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction=True
+            torch.backends.cuda.matmul.allow_tf32=True
+            torch.backends.cudnn.allow_tf32=True
+            torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
 
         cache_latents = args.cache_latents
         use_dreambooth_method = args.in_json is None
@@ -3205,7 +3213,13 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--disable_cuda_reduced_precision_operations",
         action="store_true",
-        help="Disables reduced precision for bf16, fp16, and disables use of tf32 to maximize precision at a tiny cost to performance.",
+        help="Disables reduced precision for bf16, fp16, and disables use of tf32 to maximize precision at a small cost to performance.",
+    )
+
+    parser.add_argument(
+        "--enable_cuda_reduced_precision_operations",
+        action="store_true",
+        help="Enables reduced precision for bf16, fp16, and enables use of tf32, reducing precision a negligible amount for a performance benefit.",
     )
 
     parser.add_argument(
