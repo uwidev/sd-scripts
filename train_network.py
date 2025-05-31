@@ -1890,10 +1890,9 @@ class NetworkTrainer:
 
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
-            for skip_epoch in range(epoch_to_start):  # skip epochs
-                logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
-                initial_step -= len(train_dataloader)
             global_step = initial_step
+            logger.info(f"skipping epoch {epoch_to_start} because initial_step (multiplied) is {initial_step}")
+            initial_step -= epoch_to_start * len(train_dataloader)
 
         # log device and dtype for each model
         logger.info(f"unet dtype: {unet_weight_dtype}, device: {unet.device}")
@@ -1955,16 +1954,13 @@ class NetworkTrainer:
 
                 skipped_dataloader = None
                 if initial_step > 0:
-                    skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
-                    initial_step = 1
+                    skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step)
+                    initial_step = 0
 
                 for step, batch in enumerate(skipped_dataloader or train_dataloader):
                     current_step.value = global_step
                     current_batch_size = len(batch['network_multipliers'])
                     effective_batch_size += current_batch_size
-                    if initial_step > 0:
-                        initial_step -= 1
-                        continue
 
                     # Determine whether we should synchronize gradients
                     sync_gradients = (accumulation_counter + 1) % iter_size == 0 or (step + 1 == len(skipped_dataloader or train_dataloader))
@@ -2476,16 +2472,13 @@ class NetworkTrainer:
 
                 skipped_dataloader = None
                 if initial_step > 0:
-                    skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
-                    initial_step = 1
+                    skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step)
+                    initial_step = 0
 
                 for step, batch in enumerate(skipped_dataloader or train_dataloader):
                     current_step.value = global_step
                     current_batch_size = len(batch['network_multipliers'])
                     effective_batch_size += current_batch_size
-                    if initial_step > 0:
-                        initial_step -= 1
-                        continue
 
                     with accelerator.accumulate(training_model, lossweightMLP) if args.edm2_loss_weighting else accelerator.accumulate(training_model):
                         on_step_start_for_network(text_encoder, unet)
@@ -2494,8 +2487,6 @@ class NetworkTrainer:
 
                         # temporary, for batch processing
                         self.on_step_start(args, accelerator, network, text_encoders, unet, batch, weight_dtype)
-
-
 
                         if "latents" in batch and batch["latents"] is not None:
                             latents = batch["latents"].to(device=accelerator.device)
