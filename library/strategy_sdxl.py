@@ -102,7 +102,7 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
         ]
 
         # apply projection: projection may be of different dtype than last_hidden_state
-        pooled_output = text_encoder.text_projection(pooled_output.to(text_encoder.text_projection.weight.dtype))
+        pooled_output = text_encoder.text_projection(pooled_output)
         pooled_output = pooled_output.to(last_hidden_state.dtype)
 
         return pooled_output
@@ -139,9 +139,9 @@ class SdxlTextEncodingStrategy(TextEncodingStrategy):
             enc_out = text_encoder2(input_ids2, output_hidden_states=True, return_dict=True)
             hidden_states2 = enc_out["hidden_states"][-2]  # penuultimate layer
 
-        # pool2 = enc_out["text_embeds"]
-        unwrapped_text_encoder2 = unwrapped_text_encoder2 or text_encoder2
-        pool2 = self._pool_workaround(unwrapped_text_encoder2, enc_out["last_hidden_state"], input_ids2, tokenizer2.eos_token_id)
+            # pool2 = enc_out["text_embeds"]
+            unwrapped_text_encoder2 = unwrapped_text_encoder2 or text_encoder2
+            pool2 = self._pool_workaround(unwrapped_text_encoder2, enc_out["last_hidden_state"], input_ids2, tokenizer2.eos_token_id)
 
         # b*n, 77, 768 or 1280 -> b, n*77, 768 or 1280
         n_size = 1 if max_token_length is None else max_token_length // 75
