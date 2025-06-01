@@ -597,7 +597,7 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
           image_count: {subset.img_count}
           num_repeats: {subset.num_repeats}
           shuffle_caption: {subset.shuffle_caption}
-          shuffle_caption_sigma: {subset.shuffle_caption_sigma}
+          shuffle_caption_sigma: {int(getattr(subset, "shuffle_caption_sigma", 0))}
           keep_tokens: {subset.keep_tokens}
           keep_tokens_separator: {subset.keep_tokens_separator}
           caption_separator: {subset.caption_separator}
@@ -612,7 +612,7 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
           flip_aug: {subset.flip_aug}
           face_crop_aug_range: {subset.face_crop_aug_range}
           random_crop: {subset.random_crop}
-          random_crop_padding_percent: {subset.random_crop_padding_percent}
+          random_crop_padding_percent: {float(getattr(subset, "random_crop_padding_percent", 0.05))}
           token_warmup_min: {subset.token_warmup_min}
           token_warmup_step: {subset.token_warmup_step}
           alpha_mask: {subset.alpha_mask}
@@ -684,7 +684,7 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
           image_dir: "{subset.image_dir}"
           image_count: {subset.img_count}
           shuffle_caption: {subset.shuffle_caption}
-          shuffle_caption_sigma: {subset.shuffle_caption_sigma}
+          shuffle_caption_sigma: {int(getattr(subset, "shuffle_caption_sigma", 0))}
           keep_tokens: {subset.keep_tokens}
           keep_tokens_separator: {subset.keep_tokens_separator}
           caption_prefix: {subset.caption_prefix}
