@@ -1375,8 +1375,8 @@ def train(args):
                                         )
                                     )
                                 else:
-                                    input_ids1 = input_ids1.to(device=accelerator.device, dtype=dtype_to_use)
-                                    input_ids2 = input_ids2.to(device=accelerator.device, dtype=dtype_to_use)
+                                    input_ids1 = input_ids1.to(device=accelerator.device)
+                                    input_ids2 = input_ids2.to(device=accelerator.device)
                                     encoder_hidden_states1, encoder_hidden_states2, pool2 = text_encoding_strategy.encode_tokens(
                                         tokenize_strategy,
                                         [text_encoder1, text_encoder2, accelerator.unwrap_model(text_encoder2)],
