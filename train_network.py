@@ -1804,7 +1804,7 @@ class NetworkTrainer:
         gns = 0.0,
         variance = 0.0
 
-        if not args.disable_norm_metrics:
+        if not args.disable_norm_metrics and not (args.full_bf16 or args.full_fp16):
             gradient_stats = {
                     'train/grad_norm/mean': 0.0,
                     'train/grad_norm/median': 0.0,
@@ -1943,6 +1943,9 @@ class NetworkTrainer:
             print("Warning: Masked loss is not applied spatially for frequency loss.")
 
         dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
+
+        if not args.disable_norm_metrics and not (args.full_bf16 or args.full_fp16):
+            logger.warning("Unable to log gradients and model norms if full_bf16 or full_fp16, as requires float for quintiles.")
 
         if args.full_bf16:
             # apply stochastic grad accumulator hooks
@@ -2193,7 +2196,7 @@ class NetworkTrainer:
 
                         unwrapped_network = accelerator.unwrap_model(network)
 
-                        if not args.disable_norm_metrics:
+                        if not args.disable_norm_metrics and not (args.full_bf16 or args.full_fp16):
                             params_to_analyze = unwrapped_network.get_trainable_params()
                             gradient_stats = analyze_gradient_norms(params_to_analyze)
 
@@ -2290,7 +2293,7 @@ class NetworkTrainer:
                             mean_combined_norm = None
                             max_mean_logs = {}
 
-                        if not args.disable_norm_metrics and hasattr(network, "get_norms"):
+                        if not args.disable_norm_metrics and hasattr(network, "get_norms") and not (args.full_bf16 or args.full_fp16):
                             unscaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
                             network_norm_stats = analyze_model_norms(unscaled_norms)
 
@@ -2680,7 +2683,7 @@ class NetworkTrainer:
                         if accelerator.sync_gradients:
                             #self.all_reduce_network(accelerator, network)  # sync DDP grad manually
 
-                            if not args.disable_norm_metrics:
+                            if not args.disable_norm_metrics and not (args.full_bf16 or args.full_fp16):
                                 params_to_analyze = accelerator.unwrap_model(network).get_trainable_params()
                                 gradient_stats = analyze_gradient_norms(params_to_analyze)
 
@@ -2775,7 +2778,7 @@ class NetworkTrainer:
                         mean_combined_norm = None
                         max_mean_logs = {}
 
-                    if accelerator.sync_gradients and not args.disable_norm_metrics and hasattr(network, "get_norms"):
+                    if accelerator.sync_gradients and not args.disable_norm_metrics and hasattr(network, "get_norms") and not (args.full_bf16 or args.full_fp16):
                         unscaled_norms = accelerator.unwrap_model(network).get_norms(accelerator.device)
                         network_norm_stats = analyze_model_norms(unscaled_norms)
                     else:
