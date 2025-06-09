@@ -1944,7 +1944,7 @@ class NetworkTrainer:
 
         dtype_to_use = torch.float64 if args.loss_related_use_float64 else torch.float32
 
-        if not args.disable_norm_metrics and not (args.full_bf16 or args.full_fp16):
+        if not args.disable_norm_metrics and (args.full_bf16 or args.full_fp16):
             logger.warning("Unable to log gradients and model norms if full_bf16 or full_fp16, as requires float for quintiles.")
 
         if args.full_bf16:
