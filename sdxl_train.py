@@ -1311,7 +1311,7 @@ def train(args):
                     logs = {**val_logs, **logs}
 
                 if args.edm2_loss_weighting:
-                    logs = {"loss/current_loss_scaled": current_val_loss, "loss/average_scaled": average_loss_scaled, **logs}
+                    logs = {"loss/current_loss_scaled": current_loss_scaled, "loss/average_scaled": average_loss_scaled, **logs}
 
                 if len(accelerator.trackers) > 0:
                     if block_lrs is None:
@@ -1618,7 +1618,7 @@ def train(args):
                     logs = {**val_logs, **logs}
 
                 if args.edm2_loss_weighting:
-                    logs = {"loss/current_loss_scaled": current_val_loss, "loss/average_scaled": average_loss_scaled, **logs}
+                    logs = {"loss/current_loss_scaled": current_loss_scaled, "loss/average_scaled": average_loss_scaled, **logs}
 
                 if len(accelerator.trackers) > 0:
                     if block_lrs is None:
