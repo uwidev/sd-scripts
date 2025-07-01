@@ -754,8 +754,9 @@ class NetworkTrainer:
         use_dreambooth_method = args.in_json is None
         use_user_config = args.dataset_config is not None
 
-        if args.seed is None:
+        if args.seed is None or args.seed == -1:
             args.seed = random.randint(0, 2**32)
+            logger.info(f"As seed provided is -1, randomly selected {args.seed} as the seed for this training run.")
         set_seed(args.seed)
 
         tokenize_strategy = self.get_tokenize_strategy(args)
