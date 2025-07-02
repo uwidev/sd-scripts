@@ -757,7 +757,7 @@ class NetworkTrainer:
         if args.seed is None or args.seed == -1:
             args.seed = random.randint(0, 2**32)
             logger.info(f"As seed provided is -1, randomly selected {args.seed} as the seed for this training run.")
-        set_seed(args.seed)
+        set_seed(int(args.seed))
 
         tokenize_strategy = self.get_tokenize_strategy(args)
         strategy_base.TokenizeStrategy.set_strategy(tokenize_strategy)
