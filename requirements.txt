@@ -2,7 +2,7 @@
 #torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
 accelerate==1.8.1
 transformers==4.50.3
-diffusers==0.33.1
+diffusers==0.34.0
 opencv-python==4.11.0.86
 einops==0.8.1
 pytorch-lightning==2.5.2
