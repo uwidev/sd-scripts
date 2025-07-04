@@ -6,7 +6,7 @@ diffusers==0.34.0
 opencv-python==4.11.0.86
 einops==0.8.1
 pytorch-lightning==2.5.2
-bitsandbytes==0.46.0
+bitsandbytes==0.46.1
 prodigyopt==1.1.2
 lion-pytorch==0.2.3
 schedulefree==1.4.1
@@ -32,7 +32,7 @@ triton==3.3.0; platform_system == "Linux"
 triton-windows==3.3.1.post19; platform_system == "Windows"
 prodigy-plus-schedule-free==2.0.0rc2
 kornia==0.8.1
-xformers==v0.0.30 --index-url https://download.pytorch.org/whl/cu128
+#xformers==0.0.32.dev1062
 PyWavelets==1.8.0
 hf-xet==1.1.5
 # for kohya_ss library
