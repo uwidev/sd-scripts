@@ -408,6 +408,8 @@ class NetworkTrainer:
         train_unet,
         fixed_timesteps=None,
         train=True,
+        min_timestep_override=None,
+        max_timestep_override=None,
     ):
         if args.loss_related_use_float64:
             # Convert to float64, noise and noisy latents will be float64 due to using like on latents
@@ -415,7 +417,7 @@ class NetworkTrainer:
 
         # Sample noise, sample a random timestep for each image, and add noise to the latents,
         # with noise offset and/or multires noise if specified
-        noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps, train, batch)
+        noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, fixed_timesteps, train, batch, min_timestep_override, max_timestep_override)
 
         # ensure the hidden state will require grad
         if train and args.gradient_checkpointing:
@@ -854,6 +856,33 @@ class NetworkTrainer:
             logger.warning("No half vae enabled with float or bf16. This provides no value, as float and bf16 do not face NaNs, only fp16 does. Using no half vae will use more vram, a small amount of compute overhead, and not have any tangible benefit.")
 
         vae_dtype = torch.float32 if args.no_half_vae else weight_dtype
+        
+        # support dynamic timestep schedule if used
+        current_min_timestep = args.min_timestep
+        current_max_timestep = args.max_timestep
+        dynamic_timestep_schedule = None
+
+        if args.dynamic_timestep_schedule:
+            try:
+                schedule = ast.literal_eval(args.dynamic_timestep_schedule)
+                schedule.sort(key=lambda x: x[0])  # Sort by step trigger
+                dynamic_timestep_schedule = schedule # Assign the sorted schedule
+                accelerator.print(f"Using dynamic timestep schedule: {dynamic_timestep_schedule}")
+
+                # If the first step in the schedule is not 0, it means we use the args' values until that step.
+                # So we can prepend a "stage 0" to the schedule for clean handling.
+                if dynamic_timestep_schedule[0][0] != 0:
+                    dynamic_timestep_schedule.insert(0, (0, args.min_timestep, args.max_timestep))
+                
+                # Immediately apply the first stage's values
+                step_trigger, new_min, new_max = dynamic_timestep_schedule.pop(0)
+                current_min_timestep = new_min
+                current_max_timestep = new_max
+                accelerator.print(f"Step 0: Initial timestep range set to [{current_min_timestep}, {current_max_timestep})")
+                
+            except (ValueError, SyntaxError) as e:
+                logger.error(f"Could not parse --dynamic_timestep_schedule. Please check the format. Error: {e}")
+                return
 
         # モデルを読み込む
         model_version, text_encoder, vae, unet = self.load_target_model(args, weight_dtype, accelerator)
@@ -1891,8 +1920,8 @@ class NetworkTrainer:
                 gns, variance = network.gradient_noise_scale()
                 if gns is not None and variance is not None:
                     logs = {**logs, "gns/gradient_noise_scale": gns, "gns/noise_variance": variance, "gns/critical_batch_size": gns / effective_batch_size}
-            accelerator.log(logs, step=0)
-
+            accelerator.log(logs, step=0)            
+        
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
             global_step = initial_step
@@ -1969,7 +1998,17 @@ class NetworkTrainer:
                     current_step.value = global_step
                     current_batch_size = len(batch['network_multipliers'])
                     effective_batch_size += current_batch_size
-
+                    
+                    # dynamic_timestep_schedule support
+                    if dynamic_timestep_schedule and len(dynamic_timestep_schedule) > 0 and global_step >= dynamic_timestep_schedule[0][0]:
+                        # Get the next schedule stage and remove it from the list
+                        step_trigger, new_min, new_max = dynamic_timestep_schedule.pop(0)
+                        current_min_timestep = new_min
+                        current_max_timestep = new_max
+                        accelerator.print(
+                            f"\nStep {global_step}: Timestep range dynamically changed to [{current_min_timestep}, {current_max_timestep})"
+                        )
+                        
                     # Determine whether we should synchronize gradients
                     sync_gradients = (accumulation_counter + 1) % iter_size == 0 or (step + 1 == len(skipped_dataloader or train_dataloader))
 
@@ -2064,6 +2103,8 @@ class NetworkTrainer:
                                 network,
                                 weight_dtype,
                                 train_unet,
+                                min_timestep_override=current_min_timestep,
+                                max_timestep_override=current_max_timestep,
                             )
 
                             if noise_pred.dtype not in {torch.float32, torch.float64}:
@@ -2487,7 +2528,16 @@ class NetworkTrainer:
                     current_step.value = global_step
                     current_batch_size = len(batch['network_multipliers'])
                     effective_batch_size += current_batch_size
-
+                    
+                    # dynamic_timestep_schedule support
+                    if dynamic_timestep_schedule and len(dynamic_timestep_schedule) > 0 and global_step >= dynamic_timestep_schedule[0][0]:
+                        # Get the next schedule stage and remove it from the list
+                        step_trigger, new_min, new_max = dynamic_timestep_schedule.pop(0)
+                        current_min_timestep = new_min
+                        current_max_timestep = new_max
+                        accelerator.print(
+                            f"\nStep {global_step}: Timestep range dynamically changed to [{current_min_timestep}, {current_max_timestep})"
+                        )
                     with accelerator.accumulate(training_model, lossweightMLP) if args.edm2_loss_weighting else accelerator.accumulate(training_model):
                         on_step_start_for_network(text_encoder, unet)
 
@@ -2575,6 +2625,8 @@ class NetworkTrainer:
                                 network,
                                 weight_dtype,
                                 train_unet,
+                                min_timestep_override=current_min_timestep,
+                                max_timestep_override=current_max_timestep,
                             )
 
                             if noise_pred.dtype not in {torch.float32, torch.float64}:
@@ -3164,7 +3216,15 @@ def setup_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of max validation steps for counting validation loss. By default, validation will run entire validation dataset"
-    )    
+    )
+    parser.add_argument(
+        "--dynamic_timestep_schedule",
+        type=str,
+        default=None,
+        help="Dynamically change min/max timestep during training. "
+             "Format as a string of a list of tuples: '[(step, min_ts, max_ts), (step, min_ts, max_ts), ...]'. "
+             "Example: '[(500, 0, 500), (1000, 0, 1000)]' will train on timesteps 0-499 for the first 500 steps, then 0-999 after that."
+    )
     parser.add_argument(
         "--skip_until_initial_step",
         action="store_true",
@@ -3461,6 +3521,7 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disables calculation and collection of gradient and weight norm metrics that are for reporting via tensorboard or wandb."
     )
+    
 
     # parser.add_argument("--loraplus_lr_ratio", default=None, type=float, help="LoRA+ learning rate ratio")
     # parser.add_argument("--loraplus_unet_lr_ratio", default=None, type=float, help="LoRA+ UNet learning rate ratio")
