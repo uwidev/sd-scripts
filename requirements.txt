@@ -1,6 +1,7 @@
 #torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 #torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-accelerate==1.8.1
+#xformers==0.0.31.post1 --index-url https://download.pytorch.org/whl/cu128
+accelerate==1.9.0
 transformers==4.50.3
 diffusers==0.34.0
 opencv-python==4.12.0.88
@@ -14,7 +15,7 @@ tensorboard==2.19.0
 safetensors==0.5.3
 toml==0.10.2
 voluptuous==0.15.2
-huggingface-hub[hf_xet]==0.33.2
+huggingface-hub[hf_xet]==0.33.4
 matplotlib==3.10.1
 scipy==1.15.2
 imagesize==1.4.1
@@ -32,7 +33,6 @@ triton==3.3.0; platform_system == "Linux"
 triton-windows==3.3.1.post19; platform_system == "Windows"
 prodigy-plus-schedule-free==2.0.0rc2
 kornia==0.8.1
-#xformers==0.0.32.dev1062
 PyWavelets==1.8.0
 hf-xet==1.1.5
 # for kohya_ss library
