@@ -19,7 +19,7 @@ huggingface-hub[hf_xet]==0.33.4
 matplotlib==3.10.1
 scipy==1.15.2
 imagesize==1.4.1
-rich==14.0.0
+rich==14.1.0
 sentencepiece==0.2.0
 dadaptation==3.2
 wandb==0.21.0
