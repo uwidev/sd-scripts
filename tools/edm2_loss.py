@@ -77,7 +77,11 @@ class AdaptiveLossWeightMLP(nn.Module):
             # min snr importance weights
             all_timesteps = torch.arange(noise_scheduler.config.num_train_timesteps).to(device=device, dtype=dtype)
             snr = torch.stack([noise_scheduler.all_snr[t] for t in all_timesteps])
-            min_snr_gamma = (importance_weights_max_weight * 2) * torch.minimum(snr, torch.full_like(snr, importance_weights_min_snr_gamma)) # multiply the torch.minimum by the max weight you want * 2 (i.e multiply by 40 and it'll cap off at 20 loss)
+
+            min_snr_gamma = (
+                (importance_weights_max_weight * (1 + 1 / importance_weights_min_snr_gamma)) * 
+                torch.minimum(snr, torch.full_like(snr, importance_weights_min_snr_gamma))
+                ) # multiply the torch.minimum by the max weight you want * 2 (i.e multiply by 40 and it'll cap off at 20 loss)
             min_snr_gamma = torch.div(min_snr_gamma, snr + 1).to(dtype=dtype, device=device)
             self.importance_weights = torch.where(
                 self.importance_weights > min_snr_gamma,

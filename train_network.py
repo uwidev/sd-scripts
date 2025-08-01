@@ -752,6 +752,21 @@ class NetworkTrainer:
             torch.backends.cudnn.allow_tf32=True
             torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(True)
 
+        if args.edm2_loss_weighting and args.edm2_loss_weighting_importance_weighting and not args.edm2_loss_weighting_importance_weighting_safety_override:
+            if args.debiased_estimation_loss:
+                args.debiased_estimation_loss = False
+                logger.warning("Debiased estimation loss AND EDM2 loss weighting with importance weighting are enabled. " \
+                "It is not advised to use both, as there is a possiblity of loss curving to 0 as SNR approaches 0, " \
+                "as such, Debiased estimation loss has been DISABLED. " \
+                "You may override this behavior by setting edm2_loss_weighting_importance_weighting_safety_override=True.")
+
+            if args.min_snr_gamma:
+                logger.warning("Min snr gamma AND EDM2 loss weighting with importance weighting are enabled. " \
+                "It is not advised to use both, as there is a possiblity of loss curving to 0 as SNR approaches 0, " \
+                "as such, min snr gamma has been DISABLED. " \
+                "You may override this behavior by setting edm2_loss_weighting_importance_weighting_safety_override=True.")
+                args.min_snr_gamma = None
+
         cache_latents = args.cache_latents
         use_dreambooth_method = args.in_json is None
         use_user_config = args.dataset_config is not None
@@ -1673,7 +1688,7 @@ class NetworkTrainer:
                                                                       dtype=torch.float64 if args.edm2_loss_weighting_use_float64 or args.loss_related_use_float64 else torch.float32,
                                                                       use_importance_weights=args.edm2_loss_weighting_importance_weighting,
                                                                       importance_weights_max_weight=float(args.edm2_loss_weighting_importance_weighting_max) if args.edm2_loss_weighting_importance_weighting_max is not None else 10.0,
-                                                                      importance_weights_min_snr_gamma=args.min_snr_gamma if args.min_snr_gamma is not None else 1.0)
+                                                                      importance_weights_min_snr_gamma=float(args.edm2_loss_weighting_importance_min_snr_gamma) if args.edm2_loss_weighting_importance_min_snr_gamma is not None else 1.0)
             if args.edm2_loss_weighting_initial_weights:
                 lossweightMLP.load_weights(args.edm2_loss_weighting_initial_weights)
 
@@ -3355,7 +3370,7 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--edm2_loss_weighting_optimizer_args",
         type=str,
-        default=r"{'weight_decay': 0, 'betas': (0.9,0.99)}",
+        default=r"{'weight_decay': 0, 'betas': (0.9,0.999)}",
         help="A JSON object as a string of optimizer args for the edm2 loss weighting optimizer.",
     )
 
@@ -3448,14 +3463,31 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--edm2_loss_weighting_importance_weighting",
         action="store_true",
-        help="If edm2 loss scaling weights are weighted by importance, which is based on min snr gamma value and SNR for the given timestep.",
+        help="If edm2 loss scaling weights are weighted by importance, which is based using a specific min snr gamma value and SNR for the given timestep. " \
+        "Default behavior when edm2_loss_weighting_importance_weighting is enabled is to disable normal min snr gamma and debiased loss if enabled." \
+        "It is not advised to stack with either, as there is a possiblity of loss curving to 0 as SNR approaches 0." \
+        "If you still wish to, set edm2_loss_weighting_importance_safety_override=True at your own risk."
     )
 
     parser.add_argument(
         "--edm2_loss_weighting_importance_weighting_max",
         type=float,
         default=10.0,
-        help="The max loss weighting/scaling to apply when using importance weighting, has no effect otherwise.",
+        help="The max loss weighting/scaling to apply when using edm2 importance weighting, has no effect otherwise.",
+    )
+
+    parser.add_argument(
+        "--edm2_loss_weighting_importance_min_snr_gamma",
+        type=float,
+        default=1.0,
+        help="The min snr gamma used for edm2 importance weighting as a heuristic, has no effect if not using importance weighting. " \
+        "Not related to the typical application of min snr gamma.",
+    )
+
+    parser.add_argument(
+        "--edm2_loss_weighting_importance_safety_override",
+        action="store_true",
+        help="At your own risk, you may set this to true to ALLOW stacking debiased loss and/or typical min snr gamma with EDM2 using importance weighting.",
     )
 
     parser.add_argument(
