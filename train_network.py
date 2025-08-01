@@ -3466,7 +3466,7 @@ def setup_parser() -> argparse.ArgumentParser:
         help="If edm2 loss scaling weights are weighted by importance, which is based using a specific min snr gamma value and SNR for the given timestep. " \
         "Default behavior when edm2_loss_weighting_importance_weighting is enabled is to disable normal min snr gamma and debiased loss if enabled." \
         "It is not advised to stack with either, as there is a possiblity of loss curving to 0 as SNR approaches 0." \
-        "If you still wish to, set edm2_loss_weighting_importance_safety_override=True at your own risk."
+        "If you still wish to, set edm2_loss_weighting_importance_weighting_safety_override=True at your own risk."
     )
 
     parser.add_argument(
@@ -3485,7 +3485,7 @@ def setup_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--edm2_loss_weighting_importance_safety_override",
+        "--edm2_loss_weighting_importance_weighting_safety_override",
         action="store_true",
         help="At your own risk, you may set this to true to ALLOW stacking debiased loss and/or typical min snr gamma with EDM2 using importance weighting.",
     )
