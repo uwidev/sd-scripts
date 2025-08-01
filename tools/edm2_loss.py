@@ -53,6 +53,10 @@ class AdaptiveLossWeightMLP(nn.Module):
             lambda_weights: torch.Tensor = None,
             device='cuda',
             dtype=torch.float32,
+            use_importance_weights: bool = True,
+            importance_weights_max_weight: float = 10.0,
+            importance_weights_min_snr_gamma: float = 1.0,
+            importance_weights: torch.Tensor = None,
         ):
         super().__init__()
         self.alphas_cumprod = noise_scheduler.alphas_cumprod.to(device=device, dtype=dtype)
@@ -66,6 +70,20 @@ class AdaptiveLossWeightMLP(nn.Module):
         self.lambda_weights = lambda_weights.to(device=device, dtype=dtype) if lambda_weights is not None else torch.ones(noise_scheduler.config.num_train_timesteps, device=device)
         self.noise_scheduler = noise_scheduler
         self.dtype=dtype
+        self.use_importance_weights=use_importance_weights,
+        self.importance_weights = importance_weights.to(device=device, dtype=dtype) if importance_weights is not None else torch.ones(1000, device=device, dtype=dtype)
+
+        if self.use_importance_weights:
+            # min snr importance weights
+            all_timesteps = torch.arange(noise_scheduler.config.num_train_timesteps).to(device=device, dtype=dtype)
+            snr = torch.stack([noise_scheduler.all_snr[t] for t in all_timesteps])
+            min_snr_gamma = (importance_weights_max_weight * 2) * torch.minimum(snr, torch.full_like(snr, importance_weights_min_snr_gamma)) # multiply the torch.minimum by the max weight you want * 2 (i.e multiply by 40 and it'll cap off at 20 loss)
+            min_snr_gamma = torch.div(min_snr_gamma, snr + 1).to(dtype=dtype, device=device)
+            self.importance_weights = torch.where(
+                self.importance_weights > min_snr_gamma,
+                self.importance_weights,
+                min_snr_gamma,
+            )
 
     def _forward(self, timesteps: torch.Tensor):
         return self.logvar_linear(self.logvar_fourier(self.precomputed_c_noise[timesteps])).squeeze()
@@ -74,7 +92,7 @@ class AdaptiveLossWeightMLP(nn.Module):
         timesteps = timesteps.long()
         adaptive_loss_weights = self._forward(timesteps)
         loss_scaled = loss * (self.lambda_weights[timesteps] / torch.exp(adaptive_loss_weights)) # type: torch.Tensor
-        loss = loss_scaled + adaptive_loss_weights # type: torch.Tensor
+        loss = loss_scaled + (self.importance_weights[timesteps] * adaptive_loss_weights) # type: torch.Tensor
 
         return loss, loss_scaled
     
@@ -120,14 +138,21 @@ class AdaptiveLossWeightMLP(nn.Module):
         return info
     
 def create_weight_MLP(noise_scheduler: DDPMScheduler, 
-                      logvar_channels: int = 448, 
-                      lambda_weights: torch.tensor = None, 
-                      optimizer: torch.optim.Optimizer = torch.optim.AdamW, 
-                      lr: float = 2e-2,
-                      optimizer_args: dict = {'weight_decay': 0, 'betas': (0.9,0.99)},
-                      dtype=torch.float32,
-                      device='cuda'):
+                    logvar_channels: int = 448, 
+                    lambda_weights: torch.tensor = None, 
+                    optimizer: torch.optim.Optimizer = torch.optim.AdamW, 
+                    lr: float = 2e-2,
+                    optimizer_args: dict = {'weight_decay': 0, 'betas': (0.9,0.99)},
+                    dtype=torch.float32,
+                    device='cuda',
+                    use_importance_weights: bool = True,
+                    importance_weights_max_weight: float = 10.0,
+                    importance_weights_min_snr_gamma: float = 1.0):
     print("creating weight MLP")
-    lossweightMLP = AdaptiveLossWeightMLP(noise_scheduler, logvar_channels, lambda_weights, device, dtype=dtype)
+    lossweightMLP = AdaptiveLossWeightMLP(noise_scheduler, logvar_channels, lambda_weights, device, 
+                                          dtype=dtype, 
+                                          importance_weights_max_weight=importance_weights_max_weight, 
+                                          importance_weights_min_snr_gamma=importance_weights_min_snr_gamma, 
+                                          use_importance_weights=use_importance_weights)
     MLP_optim = optimizer(lossweightMLP.parameters(), lr=lr, **optimizer_args)
     return lossweightMLP, MLP_optim

@@ -1670,7 +1670,10 @@ class NetworkTrainer:
                                                                       lr=opti_lr,
                                                                       optimizer_args=opti_args,
                                                                       device=accelerator.device,
-                                                                      dtype=torch.float64 if args.edm2_loss_weighting_use_float64 or args.loss_related_use_float64 else torch.float32)
+                                                                      dtype=torch.float64 if args.edm2_loss_weighting_use_float64 or args.loss_related_use_float64 else torch.float32,
+                                                                      use_importance_weights=args.edm2_loss_weighting_importance_weighting,
+                                                                      importance_weights_max_weight=float(args.edm2_loss_weighting_importance_weighting_max) if args.edm2_loss_weighting_importance_weighting_max is not None else 10.0,
+                                                                      importance_weights_min_snr_gamma=args.min_snr_gamma if args.min_snr_gamma is not None else 1.0)
             if args.edm2_loss_weighting_initial_weights:
                 lossweightMLP.load_weights(args.edm2_loss_weighting_initial_weights)
 
@@ -3440,6 +3443,19 @@ def setup_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="A scaling factor to apply to the decay rate of the edm2_loss_weighting_lr_scheduler, lower values result in slower decay, higher values result in faster decay.",
+    )
+
+    parser.add_argument(
+        "--edm2_loss_weighting_importance_weighting",
+        action="store_true",
+        help="If edm2 loss scaling weights are weighted by importance, which is based on min snr gamma value and SNR for the given timestep.",
+    )
+
+    parser.add_argument(
+        "--edm2_loss_weighting_importance_weighting_max",
+        type=float,
+        default=10.0,
+        help="The max loss weighting/scaling to apply when using importance weighting, has no effect otherwise.",
     )
 
     parser.add_argument(
