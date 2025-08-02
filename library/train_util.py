@@ -7427,29 +7427,29 @@ def plot_dynamic_loss_weighting(args, step: int, model, num_timesteps: int = 100
     :param device: Device to run computations on.
     """
     with torch.inference_mode():
-        # Generate a range of timesteps
-        timesteps = torch.linspace(0, num_timesteps - 1, num_timesteps).to("cpu").long()
-
         model.train(False)
-        loss, loss_scale = model(torch.ones_like(timesteps, device=device), timesteps)
+        timesteps = torch.arange(0, 1000, device=device, dtype=torch.long)
+        learnedweights = model._forward(timesteps).cpu().numpy()
+        lambdas = model.lambda_weights.cpu().numpy()
+        learnedweights = lambdas/np.exp(learnedweights)
         model.train(True)
 
         # Plot the dynamic loss weights over time
         plt.figure(figsize=(10, 6))
-        plt.plot(timesteps.cpu().numpy(), loss.cpu().numpy(),
+        plt.plot(timesteps.cpu().numpy(), learnedweights,
                 label=f'Dynamic Loss Weight\nStep: {step}')
         plt.xlabel('Timesteps')
         plt.ylabel('Weight')
         plt.title('Dynamic Loss Weighting vs Timesteps')
         plt.legend()
         plt.grid(True)
-        plt.ylim(bottom=1)
+        plt.ylim(bottom=0)
         if args.edm2_loss_weighting_generate_graph_y_limit is not None:
             plt.ylim(top=int(args.edm2_loss_weighting_generate_graph_y_limit))
         plt.xlim(left=0, right=num_timesteps)
         plt.xticks(np.arange(0, num_timesteps+1, 100)) 
         # plt.show()
-
+        
         try:
             os.makedirs(args.edm2_loss_weighting_generate_graph_output_dir, exist_ok=True)
             output_dir = os.path.join(args.edm2_loss_weighting_generate_graph_output_dir, args.output_name)
