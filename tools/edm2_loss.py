@@ -49,7 +49,7 @@ class AdaptiveLossWeightMLP(nn.Module):
     def __init__(
             self,
             noise_scheduler: DDPMScheduler,
-            logvar_channels: int = 448,
+            logvar_channels: int = 128,
             lambda_weights: torch.Tensor = None,
             device='cuda',
             dtype=torch.float32,
@@ -60,16 +60,16 @@ class AdaptiveLossWeightMLP(nn.Module):
         ):
         super().__init__()
         self.alphas_cumprod = noise_scheduler.alphas_cumprod.to(device=device, dtype=dtype)
-        self.sigmas = ((1.0 - self.alphas_cumprod).sqrt()).to(device=device, dtype=dtype)
-        safe_sigmas = self.sigmas.clamp(min=1e-8) # Use clamped for log
-
-        self.register_buffer('precomputed_c_noise', 0.25 * torch.log(safe_sigmas))
-
+        #self.a_bar_mean = noise_scheduler.alphas_cumprod.mean()
+        #self.a_bar_std = noise_scheduler.alphas_cumprod.std()
+        self.a_bar_mean = self.alphas_cumprod.mean()
+        self.a_bar_std = self.alphas_cumprod.std()
         self.logvar_fourier = FourierFeatureExtractor(logvar_channels, dtype=dtype)
-        self.logvar_linear = NormalizedLinearLayer(logvar_channels, 1, kernel=(), dtype=dtype)
-        self.lambda_weights = lambda_weights.to(device=device, dtype=dtype) if lambda_weights is not None else torch.ones(noise_scheduler.config.num_train_timesteps, device=device)
+        self.logvar_linear = NormalizedLinearLayer(logvar_channels, 1, kernel=[], dtype=dtype) # kernel = []? (not in code given, added matching edm2)
+        self.lambda_weights = lambda_weights.to(device=device, dtype=dtype) if lambda_weights is not None else torch.ones(1000, device=device)
         self.noise_scheduler = noise_scheduler
         self.dtype=dtype
+
         self.use_importance_weights=use_importance_weights,
         self.importance_weights = importance_weights.to(device=device, dtype=dtype) if importance_weights is not None else torch.ones(1000, device=device, dtype=dtype)
 
@@ -90,7 +90,10 @@ class AdaptiveLossWeightMLP(nn.Module):
             )
 
     def _forward(self, timesteps: torch.Tensor):
-        return self.logvar_linear(self.logvar_fourier(self.precomputed_c_noise[timesteps])).squeeze()
+        #a_bar = self.noise_scheduler.alphas_cumprod[timesteps]
+        a_bar = self.alphas_cumprod[timesteps]
+        c_noise = a_bar.sub(self.a_bar_mean).div_(self.a_bar_std)
+        return self.logvar_linear(self.logvar_fourier(c_noise)).squeeze()
 
     def forward(self, loss: torch.Tensor, timesteps):
         timesteps = timesteps.long()
@@ -142,7 +145,7 @@ class AdaptiveLossWeightMLP(nn.Module):
         return info
     
 def create_weight_MLP(noise_scheduler: DDPMScheduler, 
-                    logvar_channels: int = 448, 
+                    logvar_channels: int = 128, 
                     lambda_weights: torch.tensor = None, 
                     optimizer: torch.optim.Optimizer = torch.optim.AdamW, 
                     lr: float = 2e-2,
