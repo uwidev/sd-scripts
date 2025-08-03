@@ -139,7 +139,7 @@ def analyze_gradient_norms(parameters):
 
 @torch.no_grad()
 def analyze_model_norms(unscaled_norms):
-    if unscaled_norms is None or unscaled_norms.numel() == 0:
+    if unscaled_norms is None or not isinstance(unscaled_norms, torch.Tensor) or unscaled_norms.numel() == 0:
         return {
                 'model/module_norm/unscaled/mean': 0.0,
                 'model/module_norm/unscaled/median': 0.0,
