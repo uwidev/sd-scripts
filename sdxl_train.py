@@ -1186,12 +1186,6 @@ def train(args):
                             optimizer.step()
 
                             if args.edm2_loss_weighting:
-                                edm2_loss_weighting_max_grad_norm = float(args.edm2_loss_weighting_max_grad_norm) if args.edm2_loss_weighting_max_grad_norm is not None else 1.0
-                                if edm2_loss_weighting_max_grad_norm != 0.0:
-                                    params_to_clip = []
-                                    params_to_clip.extend(lossweightMLP.parameters())
-                                    accelerator.clip_grad_norm_(params_to_clip, edm2_loss_weighting_max_grad_norm).item()
-
                                 MLP_optim.step()
 
                             lr_scheduler.step()
@@ -1208,12 +1202,6 @@ def train(args):
                             accumulation_counter = 0
                         else:
                             if args.edm2_loss_weighting:
-                                edm2_loss_weighting_max_grad_norm = float(args.edm2_loss_weighting_max_grad_norm) if args.edm2_loss_weighting_max_grad_norm is not None else 1.0
-                                if edm2_loss_weighting_max_grad_norm != 0.0:
-                                    params_to_clip = []
-                                    params_to_clip.extend(lossweightMLP.parameters())
-                                    accelerator.clip_grad_norm_(params_to_clip, edm2_loss_weighting_max_grad_norm).item()
-
                                 MLP_optim.step()
 
                                 if mlp_lr_scheduler is not None:
@@ -1497,12 +1485,6 @@ def train(args):
                         optimizer.step()
 
                         if args.edm2_loss_weighting:
-                            edm2_loss_weighting_max_grad_norm = float(args.edm2_loss_weighting_max_grad_norm) if args.edm2_loss_weighting_max_grad_norm is not None else 1.0
-                            if accelerator.sync_gradients and edm2_loss_weighting_max_grad_norm != 0.0:
-                                params_to_clip = []
-                                params_to_clip.extend(lossweightMLP.parameters())
-                                accelerator.clip_grad_norm_(params_to_clip, edm2_loss_weighting_max_grad_norm).item()
-
                             MLP_optim.step()
 
                         lr_scheduler.step()
@@ -1516,12 +1498,6 @@ def train(args):
                             MLP_optim.zero_grad(set_to_none=True)
                     else:
                         if args.edm2_loss_weighting:
-                            edm2_loss_weighting_max_grad_norm = float(args.edm2_loss_weighting_max_grad_norm) if args.edm2_loss_weighting_max_grad_norm is not None else 1.0
-                            if edm2_loss_weighting_max_grad_norm != 0.0:
-                                params_to_clip = []
-                                params_to_clip.extend(lossweightMLP.parameters())
-                                accelerator.clip_grad_norm_(params_to_clip, edm2_loss_weighting_max_grad_norm).item()
-
                             MLP_optim.step()
 
                             if mlp_lr_scheduler is not None:
@@ -1874,13 +1850,6 @@ def setup_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.10,
         help="Percent of training steps to maintain constant LR before decay.",
-    )
-
-    parser.add_argument(
-        "--edm2_loss_weighting_max_grad_norm",
-        type=float,
-        default=1.0,
-        help="Max grad norm to apply to edm2 loss weighting gradients.",
     )
 
     parser.add_argument(

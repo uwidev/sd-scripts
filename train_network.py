@@ -2294,16 +2294,6 @@ class NetworkTrainer:
                         optimizer.zero_grad(set_to_none=True)
 
                         if args.edm2_loss_weighting:
-                            self.all_reduce_network(accelerator, lossweightMLP)  # sync DDP grad manually
-                            params_to_clip = accelerator.unwrap_model(lossweightMLP).get_trainable_params()
-                            edm2_loss_weighting_max_grad_norm = float(args.edm2_loss_weighting_max_grad_norm) if args.edm2_loss_weighting_max_grad_norm is not None else 1.0
-                            if edm2_loss_weighting_max_grad_norm != 0.0:
-                                edm2_grad_norm = accelerator.clip_grad_norm_(params_to_clip, edm2_loss_weighting_max_grad_norm).item()
-                                edm2_grad_norm_clipped = min(edm2_grad_norm, edm2_loss_weighting_max_grad_norm)
-                            else: 
-                                edm2_grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
-                                edm2_grad_norm_clipped = edm2_grad_norm
-
                             MLP_optim.step()
 
                         # Zero gradients
@@ -2789,17 +2779,6 @@ class NetworkTrainer:
                         optimizer.step()
 
                         if args.edm2_loss_weighting:
-                            if accelerator.sync_gradients:
-                                #self.all_reduce_network(accelerator, lossweightMLP)  # sync DDP grad manually
-                                params_to_clip = accelerator.unwrap_model(lossweightMLP).get_trainable_params()
-                                edm2_loss_weighting_max_grad_norm = float(args.edm2_loss_weighting_max_grad_norm) if args.edm2_loss_weighting_max_grad_norm is not None else 1.0
-                                if edm2_loss_weighting_max_grad_norm != 0.0:
-                                    edm2_grad_norm = accelerator.clip_grad_norm_(params_to_clip, edm2_loss_weighting_max_grad_norm).item()
-                                    edm2_grad_norm_clipped = min(edm2_grad_norm, edm2_loss_weighting_max_grad_norm)
-                                else: 
-                                    edm2_grad_norm = accelerator.clip_grad_norm_(params_to_clip, float('inf')).item()
-                                    edm2_grad_norm_clipped = edm2_grad_norm
-
                             MLP_optim.step()
 
                         lr_scheduler.step()
@@ -3392,13 +3371,6 @@ def setup_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.1,
         help="Percent of training steps to maintain constant LR before decay.",
-    )
-
-    parser.add_argument(
-        "--edm2_loss_weighting_max_grad_norm",
-        type=float,
-        default=1.0,
-        help="Max grad norm to apply to edm2 loss weighting gradients.",
     )
 
     parser.add_argument(
