@@ -12,7 +12,7 @@ tensorboard==2.20.0
 safetensors==0.5.3
 toml==0.10.2
 voluptuous==0.15.2
-huggingface-hub[hf_xet]==0.33.4
+huggingface-hub[hf_xet]==0.34.4
 matplotlib==3.10.1
 scipy==1.15.2
 imagesize==1.4.1
@@ -31,6 +31,6 @@ triton-windows==3.4.0-windows.post20; platform_system == "Windows"
 prodigy-plus-schedule-free==2.0.0rc2
 kornia==0.8.1
 PyWavelets==1.8.0
-hf-xet==1.1.5
+hf-xet==1.1.9
 # for kohya_ss library
 -e .
