@@ -1,13 +1,10 @@
-#torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
-#torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-#xformers==0.0.31.post1 --index-url https://download.pytorch.org/whl/cu128
-accelerate==1.9.0
+accelerate==1.10.1
 transformers==4.50.3
-diffusers==0.34.0
+diffusers==0.35.1
 opencv-python==4.12.0.88
 einops==0.8.1
 pytorch-lightning==2.5.2
-bitsandbytes==0.46.1
+bitsandbytes==0.47.0
 prodigyopt==1.1.2
 lion-pytorch==0.2.3
 schedulefree==1.4.1
@@ -29,8 +26,8 @@ wheel==0.45.1
 ninja==1.11.1.4
 cmake==4.0.3
 setuptools==80.9.0
-triton==3.3.0; platform_system == "Linux"
-triton-windows==3.3.1.post19; platform_system == "Windows"
+triton==3.4.0; platform_system == "Linux"
+triton-windows==3.4.0-windows.post20; platform_system == "Windows"
 prodigy-plus-schedule-free==2.0.0rc2
 kornia==0.8.1
 PyWavelets==1.8.0
