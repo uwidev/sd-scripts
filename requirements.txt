@@ -1,10 +1,10 @@
 accelerate==1.10.1
 transformers==4.50.3
-diffusers==0.35.1
+diffusers==0.34.0
 opencv-python==4.12.0.88
 einops==0.8.1
 pytorch-lightning==2.5.2
-bitsandbytes==0.47.0
+bitsandbytes==0.46.1
 prodigyopt==1.1.2
 lion-pytorch==0.2.3
 schedulefree==1.4.1
@@ -26,8 +26,8 @@ wheel==0.45.1
 ninja==1.11.1.4
 cmake==4.0.3
 setuptools==80.9.0
-triton==3.4.0; platform_system == "Linux"
-triton-windows==3.4.0.post20; platform_system == "Windows"
+triton==3.3.1; platform_system == "Linux"
+triton-windows==3.3.0.post19; platform_system == "Windows"
 prodigy-plus-schedule-free==2.0.0rc2
 kornia==0.8.1
 PyWavelets==1.8.0
