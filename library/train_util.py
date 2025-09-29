@@ -5382,15 +5382,23 @@ def get_scheduler_fix(args, optimizer: Optimizer, num_processes: int):
             key, value = arg.split("=")
             value = ast.literal_eval(value)
 
-            # TODO temp fix for warmup and first cycle steps pending UI changes
+            # Allow for decimal values
+            if key == 'first_cycle_max_steps':
+                if isinstance(value, float) and value <= 1.0:
+                    value = math.ceil(num_training_steps * value)
+
+            # # TODO temp fix for warmup and first cycle steps pending UI changes
             if key == 'first_cycle_max_steps' and float(args.validation_split) > 0.0:
-                value = math.ceil(num_training_steps / num_cycles)
+                if num_cycles and num_cycles != 1:
+                    value = math.ceil(num_training_steps / num_cycles)
                 num_cycles = 1
-            elif key == 'first_cycle_max_steps':
-                num_cycles = 1
-            
-            if key == 'warmup_steps' and float(args.validation_split) > 0.0:
-                value = math.ceil(value * (1.0 - float(args.validation_split)))
+
+            if key == 'warmup_steps':
+                # Allow for decimal values
+                if isinstance(value, float) and value <= 1.0:
+                    value = math.ceil(num_training_steps * value)
+                if float(args.validation_split) > 0.0:
+                    value = math.ceil(value * (1.0 - float(args.validation_split)))
 
             lr_scheduler_kwargs[key] = value
 
