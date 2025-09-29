@@ -1639,7 +1639,10 @@ class NetworkTrainer:
             # if initial_epoch and initial_step are not specified, steps_from_state is used when resuming
             if steps_from_state is not None:
                 initial_step = steps_from_state
-                steps_from_state = None
+                # retain for resuming purposes and subtracting from max_train_steps
+                # except when we bring our initial steps forward
+                if args.skip_until_initial_step:
+                    steps_from_state = None
 
         if initial_step > 0:
             assert (
@@ -1689,28 +1692,68 @@ class NetworkTrainer:
                                                                       use_importance_weights=args.edm2_loss_weighting_importance_weighting,
                                                                       importance_weights_max_weight=float(args.edm2_loss_weighting_importance_weighting_max) if args.edm2_loss_weighting_importance_weighting_max is not None else 10.0,
                                                                       importance_weights_min_snr_gamma=float(args.edm2_loss_weighting_importance_min_snr_gamma) if args.edm2_loss_weighting_importance_min_snr_gamma is not None else 1.0)
+
             if args.edm2_loss_weighting_initial_weights:
                 lossweightMLP.load_weights(args.edm2_loss_weighting_initial_weights)
 
             if args.edm2_loss_weighting_lr_scheduler:
+                # patch so edm2 is aware of cycles via first_cycle_max_step
+                # it's used in the next code block after setting up kwargs
+                lr_scheduler_kwargs = {}  # get custom lr_scheduler kwargs
+                if args.lr_scheduler_args is not None and len(args.lr_scheduler_args) > 0:
+                    num_training_steps = args.max_train_steps * accelerator.num_processes  # this is what get_scheduler_fix does
+                    for arg in args.lr_scheduler_args:
+                        key, value = arg.split("=")
+                        value = ast.literal_eval(value)
+
+                        # # TODO temp fix for warmup and first cycle steps pending UI changes
+                        # if key == 'first_cycle_max_steps' and float(args.validation_split) > 0.0:
+                        #     value = math.ceil(num_training_steps / num_cycles)
+                        #     num_cycles = 1
+                        # elif key == 'first_cycle_max_steps':
+                        #     num_cycles = 1
+
+                        # Allow for decimal values
+                        if key == 'first_cycle_max_steps':
+                            if isinstance(value, float) and value <= 1.0:
+                                value = math.ceil(num_training_steps * value)
+
+                        # if key == 'warmup_steps' and float(args.validation_split) > 0.0:
+                        #     value = math.ceil(value * (1.0 - float(args.validation_split)))
+
+                        # Allow for decimal values
+                        if key == 'warmup_steps':
+                            if isinstance(value, float) and value <= 1.0:
+                                value = math.ceil(num_training_steps * value)
+                            if float(args.validation_split) > 0.0:
+                                value = math.ceil(value * (1.0 - float(args.validation_split)))
+
+                        lr_scheduler_kwargs[key] = value
+
                 def InverseSqrt(
                     wrap_optimizer: torch.optim.Optimizer,
                     warmup_steps: int = 0,
                     constant_steps: int = 0,
                     decay_scaling: float = 1.0,
+                    first_cycle_max_steps: int = 0,
                 ):
                     def lr_lambda(current_step: int):
+                        if first_cycle_max_steps:
+                            current_step = current_step % first_cycle_max_steps
+
                         if current_step <= warmup_steps:
                             return current_step / max(1, warmup_steps)
                         else:
                             return 1 / math.sqrt(max(current_step / max(constant_steps + warmup_steps, 1), 1)**decay_scaling)
                     return torch.optim.lr_scheduler.LambdaLR(optimizer=wrap_optimizer, lr_lambda=lr_lambda)
                 
+                first_cycle_max_steps = lr_scheduler_kwargs.get("first_cycle_max_steps", 0)
                 mlp_lr_scheduler = InverseSqrt(
                     MLP_optim,
-                    warmup_steps=args.max_train_steps * float(args.edm2_loss_weighting_lr_scheduler_warmup_percent) if args.edm2_loss_weighting_lr_scheduler_warmup_percent is not None else 0.05,
-                    constant_steps=args.max_train_steps * float(args.edm2_loss_weighting_lr_scheduler_constant_percent) if args.edm2_loss_weighting_lr_scheduler_constant_percent is not None else 0.15,
+                    warmup_steps=(first_cycle_max_steps or args.max_train_steps) * float(args.edm2_loss_weighting_lr_scheduler_warmup_percent) if args.edm2_loss_weighting_lr_scheduler_warmup_percent is not None else 0.05,
+                    constant_steps=(first_cycle_max_steps or args.max_train_steps) * float(args.edm2_loss_weighting_lr_scheduler_constant_percent) if args.edm2_loss_weighting_lr_scheduler_constant_percent is not None else 0.15,
                     decay_scaling=float(args.edm2_loss_weighting_lr_scheduler_decay_scaling) if args.edm2_loss_weighting_lr_scheduler_decay_scaling is not None else 1.0,
+                    first_cycle_max_steps = lr_scheduler_kwargs.get("first_cycle_max_steps"),
                 )
             else:
                 mlp_lr_scheduler = train_util.get_dummy_scheduler(MLP_optim)
@@ -2473,7 +2516,7 @@ class NetworkTrainer:
                         accumulation_counter = 0
                         effective_batch_size = 0
 
-                    if global_step >= args.max_train_steps:
+                    if global_step >= args.max_train_steps - (steps_from_state or 0):
                         break
 
                 if len(accelerator.trackers) > 0:
@@ -2992,7 +3035,7 @@ class NetworkTrainer:
                             accumulation_counter = 0
                             effective_batch_size = 0
                                             
-                    if global_step >= args.max_train_steps:
+                    if global_step >= args.max_train_steps - (steps_from_state or 0):
                         break
 
                 if len(accelerator.trackers) > 0:
