@@ -125,6 +125,8 @@ def add_model(basket: dict[str, str], config: TOMLDocument):
 			basket["m"] = "noobv"
 		else:
 			basket["m"] = "noob"
+	if "anima" in model_name.lower():
+		basket["m"] = "anima"
 
 
 def parse_optimizer(optimizer_name: str, optimizer_args: dict) -> str:
@@ -306,7 +308,7 @@ def add_optimizer(basket: dict[str, str], config: TOMLDocument):
 		basket["wd"] = str(shorthand_float(weight_decay))
 
 	loss_type: str | None = optimizer.get("loss_type")
-	if loss_type and loss_type != "L2":
+	if loss_type and loss_type != "l2":
 		basket["l"] = shorthand_loss_type(loss_type)
 
 
@@ -980,7 +982,7 @@ def main():
 
 		command = [
 			"python",
-			"./backend/sd_scripts/sdxl_train_network.py",
+			"./backend/sd_scripts/anima_train_network.py",
 			"--dataset_config",
 			"./backend/runtime_store/dataset.toml",
 			"--config_file",
